@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType } from '../types';
-import { updateUserStatus, toggleUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations } from '../services/mockBackend';
-import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock } from 'lucide-react';
+import { updateUserStatus, toggleUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations } from '../services/supabaseService';
+import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -40,24 +40,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const [selectedAllowedLocationIds, setSelectedAllowedLocationIds] = useState<Set<string>>(new Set());
   const [permSearch, setPermSearch] = useState('');
 
-  const handleAction = (action: () => void) => {
-    action();
+  const handleAction = async (action: () => Promise<void>) => {
+    await action();
     refreshData();
   };
 
-  const handleLocationSubmit = (e: React.FormEvent) => {
+  const handleLocationSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!locName) return;
 
     if (editingLocationId) {
-        updateLocation(editingLocationId, {
+        await updateLocation(editingLocationId, {
             name: locName,
             type: locType,
             address: locAddress
         });
         setEditingLocationId(null);
     } else {
-        addLocation(locName, locType, locAddress);
+        await addLocation(locName, locType, locAddress);
     }
     
     setLocName('');
@@ -99,11 +99,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       setPermSearch('');
   };
 
-  const savePermissions = () => {
+  const savePermissions = async () => {
       if (managingPermissionsUser) {
-          // Explicitly cast to string[] to resolve potential type inference issues with Array.from
           const newAllowed = isRestrictedMode ? (Array.from(selectedAllowedLocationIds) as string[]) : undefined;
-          updateUserAllowedLocations(managingPermissionsUser.id, newAllowed);
+          await updateUserAllowedLocations(managingPermissionsUser.id, newAllowed);
           refreshData();
           closePermissionsModal();
       }
@@ -640,7 +639,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                 <td className="p-4">
                    <div className="flex items-center gap-2">
                     <button 
-                        onClick={() => handleAction(() => toggleUserPermission(user.id, 'canViewHistory'))}
+                        onClick={() => handleAction(async () => toggleUserPermission(user.id, 'canViewHistory'))}
                         className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50' : 'text-slate-400 bg-slate-100'}`}
                         title="Toggle View History"
                     >
@@ -661,19 +660,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                 <td className="p-4 text-right">
                   <div className="flex justify-end gap-1">
                     {user.status === UserStatus.PENDING && (
-                      <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 p-2 rounded" title="Approve">
+                      <button onClick={() => handleAction(async () => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 p-2 rounded" title="Approve">
                         <CheckCircle size={16} />
                       </button>
                     )}
                     
                     {user.status !== UserStatus.REVOKED && (
-                      <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded" title="Revoke Access">
+                      <button onClick={() => handleAction(async () => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded" title="Revoke Access">
                         <XCircle size={16} />
                       </button>
                     )}
 
                     {user.status === UserStatus.REVOKED && (
-                      <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded" title="Restore Access">
+                      <button onClick={() => handleAction(async () => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded" title="Restore Access">
                         <CheckCircle size={16} />
                       </button>
                     )}
@@ -681,7 +680,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     <div className="w-px bg-slate-200 mx-1"></div>
 
                     <button 
-                      onClick={() => handleAction(() => toggleUserRole(user.id))}
+                      onClick={() => handleAction(async () => toggleUserRole(user.id))}
                       className={`p-2 rounded transition ${user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700 hover:bg-purple-200' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                       title={user.role === UserRole.ADMIN ? "Demote to Agent" : "Promote to Admin"}
                     >
@@ -875,7 +874,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                         </button>
                         <div className="w-px h-4 bg-slate-200"></div>
                         <button 
-                            onClick={() => handleAction(() => toggleLocation(loc.id))}
+                            onClick={() => handleAction(async () => toggleLocation(loc.id))}
                             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${loc.isActive ? 'bg-blue-600' : 'bg-slate-200'}`}
                             title="Toggle Status"
                         >
@@ -903,6 +902,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
            {new Date().toDateString()}
         </div>
       </div>
+
+       {/* --- SERVER CONNECTED BANNER --- */}
+       <div className="mb-6 bg-blue-50 border border-blue-200 rounded-xl p-4 flex items-start gap-3 text-sm text-blue-800">
+          <Server className="flex-shrink-0 mt-0.5" size={20} />
+          <div>
+              <strong className="block font-bold">Cloud Database Active</strong>
+              <p>
+                  You are connected to the live Supabase backend. All data is synchronized across devices in real-time.
+              </p>
+          </div>
+       </div>
 
       <div className="flex space-x-2 mb-6 border-b border-slate-200 pb-1 overflow-x-auto no-scrollbar">
         <button 

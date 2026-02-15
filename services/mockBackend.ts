@@ -226,24 +226,21 @@ export const saveData = (data: AppData) => {
 
 export const registerUser = (firstName: string, lastName: string, phone: string): User => {
   const data = loadData();
-  const isFirstUser = data.users.length === 0;
   
-  // First user (Admin) is automatically assigned to the first hotel for demo purposes
-  // if not already set.
-  const currentLocationId = isFirstUser ? 'hotel-1' : undefined;
+  // SECURITY FIX: Never allow auto-admin promotion on the client side.
+  // In a distributed/local-storage app, every user thinks they are the 'first user'.
+  // We strictly default to AGENT and PENDING.
   
   const newUser: User = {
     id: generateId(),
     firstName,
     lastName,
     phone,
-    // With seeded admin, isFirstUser will effectively always be false for new registrations
-    // This ensures new users are always PENDING AGENTS unless they are the seeded admin.
-    role: isFirstUser ? UserRole.ADMIN : UserRole.AGENT,
-    status: isFirstUser ? UserStatus.ACTIVE : UserStatus.PENDING,
+    role: UserRole.AGENT, // Default to AGENT
+    status: UserStatus.PENDING, // Default to PENDING
     permissions: DEFAULT_PERMISSIONS,
     joinedAt: new Date().toISOString(),
-    currentLocationId
+    // No default location assignment
   };
 
   data.users.push(newUser);

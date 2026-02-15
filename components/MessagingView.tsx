@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AppData, User, UserRole, LocationType } from '../types';
-import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/mockBackend';
+import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/supabaseService';
 import { Send, User as UserIcon, Briefcase, BadgeCheck } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -22,14 +22,14 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
     }
   }, [initialSelectedUserId]);
 
-  const handleSelectUser = (id: string) => {
+  const handleSelectUser = async (id: string) => {
       setSelectedUserId(id);
-      markMessagesAsRead(id, currentUser.id); // Mark messages from sender to me as read
+      await markMessagesAsRead(id, currentUser.id); // Mark messages from sender to me as read
       refreshData();
   };
 
-  const handleWorksiteChange = (val: string) => {
-    updateUserAssignedWorksite(currentUser.id, val);
+  const handleWorksiteChange = async (val: string) => {
+    await updateUserAssignedWorksite(currentUser.id, val);
     refreshData();
   };
 
@@ -83,10 +83,10 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
       ).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
     : [];
 
-  const handleSend = (e: React.FormEvent) => {
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedUserId || !msgContent.trim()) return;
-    sendMessage(currentUser.id, selectedUserId, msgContent);
+    await sendMessage(currentUser.id, selectedUserId, msgContent);
     setMsgContent('');
     refreshData();
   };

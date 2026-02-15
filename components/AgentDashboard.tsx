@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { AppData, User, RouteType, LocationType, LogEntry, TripStatus, UserRole } from '../types';
-import { createLog, markTripArrived, createBusCheckIn, updateUserLocation, updateUserAssignedWorksite } from '../services/mockBackend';
+import { createLog, markTripArrived, createBusCheckIn, updateUserLocation, updateUserAssignedWorksite } from '../services/supabaseService';
 import { SearchableDropdown } from './SearchableDropdown';
-import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X } from 'lucide-react';
+import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X, Loader2 } from 'lucide-react';
 
 interface AgentDashboardProps {
   data: AppData;
@@ -12,6 +12,7 @@ interface AgentDashboardProps {
 
 export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUser, refreshData }) => {
   const [activeTab, setActiveTab] = useState<'DEPARTURE' | 'CHECK_IN'>('DEPARTURE');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Mobile Config State
   const [isConfigOpen, setIsConfigOpen] = useState(false);
@@ -100,11 +101,12 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   const departOptions = routeType === RouteType.HOTEL_TO_SITE ? hotelLocs : siteLocs;
   const arriveOptions = routeType === RouteType.HOTEL_TO_SITE ? siteLocs : hotelLocs;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!departId || !arriveId || !driver || !company || !busNo || !passengers) return;
-
-    createLog({
+    
+    setIsSubmitting(true);
+    await createLog({
       userId: currentUser.id,
       routeType,
       departLocationId: departId,
@@ -119,14 +121,16 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
 
     setSuccessMsg('Departure logged! Trip is now In-Transit.');
     refreshData();
+    setIsSubmitting(false);
     resetForm();
   };
 
-  const handleCheckInSubmit = (e: React.FormEvent) => {
+  const handleCheckInSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!checkInLocId || !driver || !company || !busNo) return;
 
-    createBusCheckIn({
+    setIsSubmitting(true);
+    await createBusCheckIn({
       userId: currentUser.id,
       locationId: checkInLocId,
       driverName: driver,
@@ -136,6 +140,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
 
     setSuccessMsg('Bus Arrival Confirmed!');
     refreshData();
+    setIsSubmitting(false);
     resetForm();
   };
 
@@ -150,22 +155,18 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
-  const handleArrive = (id: string) => {
-    markTripArrived(id);
+  const handleArrive = async (id: string) => {
+    await markTripArrived(id);
     refreshData();
   };
 
-  const toggleRoute = () => {
-    setRouteType(prev => prev === RouteType.HOTEL_TO_SITE ? RouteType.SITE_TO_HOTEL : RouteType.HOTEL_TO_SITE);
-  };
-
-  const handleLocationChange = (val: string) => {
-    updateUserLocation(currentUser.id, val);
+  const handleLocationChange = async (val: string) => {
+    await updateUserLocation(currentUser.id, val);
     refreshData();
   };
 
-  const handleWorksiteChange = (val: string) => {
-    updateUserAssignedWorksite(currentUser.id, val);
+  const handleWorksiteChange = async (val: string) => {
+    await updateUserAssignedWorksite(currentUser.id, val);
     refreshData();
   };
 
@@ -181,7 +182,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
               </div>
               <div>
                 <h3 className="font-bold text-slate-800 text-sm">My Station</h3>
-                <p className="text-xs text-slate-500">Your current physical location.</p>
+                <p className="text-xs text-slate-500">Your current physical location (Hotel).</p>
               </div>
             </div>
             <div className="w-60">
@@ -241,7 +242,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
         {isConfigOpen && (
             <div className="px-4 py-4 bg-slate-50 border-t border-slate-100 space-y-4 shadow-inner">
                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">My Physical Location</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">My Physical Location (Hotel)</label>
                     <SearchableDropdown 
                         options={activeLocations} 
                         value={currentUser.currentLocationId || ''} 
@@ -417,10 +418,14 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
 
                   <button 
                     type="submit"
-                    className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-700/20 transition transform active:scale-[0.98] flex items-center justify-center space-x-2"
+                    disabled={isSubmitting}
+                    className="w-full bg-gradient-to-r from-blue-600 to-blue-700 hover:from-blue-700 hover:to-blue-800 disabled:opacity-70 text-white font-bold py-4 rounded-xl shadow-lg shadow-blue-700/20 transition transform active:scale-[0.98] flex items-center justify-center space-x-2"
                   >
-                    <span>Log Departure</span>
-                    <Bus size={20} />
+                    {isSubmitting ? (
+                        <Loader2 className="animate-spin" size={20} />
+                    ) : (
+                        <><span>Log Departure</span><Bus size={20} /></>
+                    )}
                   </button>
                 </form>
               ) : (
@@ -484,10 +489,14 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
 
                   <button 
                     type="submit"
-                    className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-600/20 transition transform active:scale-[0.98] flex items-center justify-center space-x-2"
+                    disabled={isSubmitting}
+                    className="w-full bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 disabled:opacity-70 text-white font-bold py-4 rounded-xl shadow-lg shadow-orange-600/20 transition transform active:scale-[0.98] flex items-center justify-center space-x-2"
                   >
-                    <span>Confirm Check-in</span>
-                    <CheckCircle2 size={20} />
+                    {isSubmitting ? (
+                        <Loader2 className="animate-spin" size={20} />
+                    ) : (
+                        <><span>Confirm Check-in</span><CheckCircle2 size={20} /></>
+                    )}
                   </button>
                 </form>
               )}

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
-import { loginUser, registerUser } from '../services/mockBackend';
-import { ShieldCheck, Bus, KeyRound } from 'lucide-react';
+import { loginUser, registerUser } from '../services/supabaseService';
+import { ShieldCheck, Bus, KeyRound, Loader2 } from 'lucide-react';
 
 interface LoginScreenProps {
   onLogin: (user: User) => void;
@@ -14,30 +14,45 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
   const [phone, setPhone] = useState('');
   const [privacyAccepted, setPrivacyAccepted] = useState(false);
   const [error, setError] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setIsLoading(true);
 
     if (!phone || !firstName || !lastName) {
       setError('All fields are required.');
+      setIsLoading(false);
       return;
     }
 
-    if (isRegistering) {
-      if (!privacyAccepted) {
-        setError('You must accept the privacy policy to continue.');
-        return;
-      }
-      const newUser = registerUser(firstName, lastName, phone);
-      onLogin(newUser);
-    } else {
-      const user = loginUser(firstName, lastName, phone);
-      if (user) {
-        onLogin(user);
+    try {
+      if (isRegistering) {
+        if (!privacyAccepted) {
+          setError('You must accept the privacy policy to continue.');
+          setIsLoading(false);
+          return;
+        }
+        const newUser = await registerUser(firstName, lastName, phone);
+        if (newUser) {
+          onLogin(newUser);
+        } else {
+          setError('Registration failed. Try again.');
+        }
       } else {
-        setError('User not found. Please register first.');
+        const user = await loginUser(firstName, lastName, phone);
+        if (user) {
+          onLogin(user);
+        } else {
+          setError('User not found. Please register first.');
+        }
       }
+    } catch (err) {
+      setError('An unexpected error occurred.');
+      console.error(err);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -65,6 +80,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 onChange={(e) => setFirstName(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900"
                 placeholder="John"
+                disabled={isLoading}
               />
             </div>
             <div>
@@ -75,6 +91,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 onChange={(e) => setLastName(e.target.value)}
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900"
                 placeholder="Doe"
+                disabled={isLoading}
               />
             </div>
           </div>
@@ -87,6 +104,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               onChange={(e) => setPhone(e.target.value)}
               className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900"
               placeholder="555-0123"
+              disabled={isLoading}
             />
           </div>
 
@@ -98,6 +116,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
                 checked={privacyAccepted}
                 onChange={(e) => setPrivacyAccepted(e.target.checked)}
                 className="mt-1 w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                disabled={isLoading}
               />
               <label htmlFor="privacy" className="text-xs text-slate-600">
                 I acknowledge that my name and phone number are collected for identification and security purposes. 
@@ -114,9 +133,12 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
 
           <button
             type="submit"
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2.5 rounded-lg transition shadow-md flex items-center justify-center space-x-2"
+            disabled={isLoading}
+            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-70 text-white font-semibold py-2.5 rounded-lg transition shadow-md flex items-center justify-center space-x-2"
           >
-            {isRegistering ? (
+            {isLoading ? (
+              <Loader2 className="animate-spin" size={18} />
+            ) : isRegistering ? (
                <><span>Request Access</span> <ShieldCheck size={18} /></>
             ) : (
                <><span>Sign In</span> <KeyRound size={18} /></>
@@ -131,7 +153,8 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               setError('');
               setPrivacyAccepted(false);
             }}
-            className="text-sm text-blue-600 hover:text-blue-800 font-medium"
+            disabled={isLoading}
+            className="text-sm text-blue-600 hover:text-blue-800 font-medium disabled:opacity-50"
           >
             {isRegistering ? 'Already have an account? Sign In' : 'New user? Register here'}
           </button>

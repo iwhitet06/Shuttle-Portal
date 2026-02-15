@@ -1,15 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, AppData, UserStatus, UserRole, RouteType } from './types';
-import { loadData } from './services/mockBackend';
+import { loadData } from './services/supabaseService';
 import { LoginScreen } from './components/LoginScreen';
 import { AgentDashboard } from './components/AgentDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
 import { MessagingView } from './components/MessagingView';
-import { LayoutDashboard, MessageSquare, LogOut, Clock, Shield, Bus, Settings, Search, X, User as UserIcon, Calendar, MapPin } from 'lucide-react';
+import { LayoutDashboard, MessageSquare, LogOut, Clock, Shield, Bus, Settings, Search, X, User as UserIcon, Calendar, MapPin, Loader2 } from 'lucide-react';
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [data, setData] = useState<AppData>(loadData());
+  const [data, setData] = useState<AppData | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
   const [view, setView] = useState<'LOG_TRIPS' | 'MESSAGES' | 'ADMIN_CONSOLE'>('LOG_TRIPS');
   
   // Search State
@@ -18,13 +19,37 @@ const App: React.FC = () => {
   const [targetUserId, setTargetUserId] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    // Poll for updates (simulating real-time)
-    const interval = setInterval(() => {
-      refreshData();
-    }, 2000);
+  const fetchData = async () => {
+    try {
+      const fetchedData = await loadData();
+      setData(fetchedData);
+      
+      // Sync current user status
+      if (currentUser) {
+        const updatedUser = fetchedData.users.find(u => u.id === currentUser.id);
+        if (updatedUser) {
+          setCurrentUser(updatedUser);
+        } else {
+          // User deleted remotely
+          setCurrentUser(null);
+          setView('LOG_TRIPS');
+        }
+      }
+    } catch (error) {
+      console.error("Failed to load data", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
-    // Close search on click outside
+  useEffect(() => {
+    fetchData(); // Initial load
+
+    // Poll for updates
+    const interval = setInterval(() => {
+      fetchData();
+    }, 5000); // Polling every 5s is safer for DBs than 2s
+
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
         setIsSearchOpen(false);
@@ -37,24 +62,6 @@ const App: React.FC = () => {
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, []);
-
-  const refreshData = () => {
-    const newData = loadData();
-    setData(newData);
-    
-    // Also update current user object if their status changed remotely
-    if (currentUser) {
-        const updatedUser = newData.users.find(u => u.id === currentUser.id);
-        if (updatedUser) {
-            setCurrentUser(updatedUser);
-        } else {
-            // Security fallback: User was removed from DB (e.g. wiped or race condition overwrite)
-            // Force logout to prevent "ghost" sessions where user is logged in but invisible to admin
-            setCurrentUser(null);
-            setView('LOG_TRIPS');
-        }
-    }
-  };
 
   const handleLogout = () => {
     setCurrentUser(null);
@@ -73,6 +80,19 @@ const App: React.FC = () => {
     setIsSearchOpen(false);
   };
 
+  // Render Loading Screen
+  if (isLoading && !data) {
+    return (
+      <div className="min-h-screen bg-slate-100 flex items-center justify-center flex-col gap-4">
+        <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
+        <p className="text-slate-500 font-medium">Connecting to Shuttle System...</p>
+      </div>
+    );
+  }
+
+  // Safety check for data
+  if (!data) return null;
+
   const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
 
   const filteredLogs = searchQuery ? data.logs.filter(l => {
@@ -89,7 +109,6 @@ const App: React.FC = () => {
 
   const filteredUsers = searchQuery ? data.users.filter(u => {
     const nameMatch = (u.firstName + ' ' + u.lastName).toLowerCase().includes(searchQuery.toLowerCase());
-    // ONLY Admins can search by phone number
     const phoneMatch = currentUser?.role === UserRole.ADMIN && u.phone.includes(searchQuery);
     return nameMatch || phoneMatch;
   }).slice(0, 5) : [];
@@ -228,7 +247,6 @@ const App: React.FC = () => {
                             </div>
                             <div>
                               <div className="text-sm font-medium text-slate-800">{user.firstName} {user.lastName}</div>
-                              {/* PRIVACY FIX: Only show phone number if user is Admin */}
                               {currentUser?.role === UserRole.ADMIN && (
                                 <div className="text-xs text-slate-500">{user.phone}</div>
                               )}
@@ -272,7 +290,6 @@ const App: React.FC = () => {
               {/* User Profile (Desktop) */}
               <div className="text-right hidden sm:block flex-shrink-0">
                 <div className="text-sm font-medium text-slate-900">{currentUser.firstName} {currentUser.lastName}</div>
-                {/* PRIVACY FIX: Hide own phone number in navbar for consistency or keep it. Keeping it as user knows their own number. */}
                 <div className="text-xs text-slate-500">{currentUser.phone}</div>
               </div>
               
@@ -287,13 +304,13 @@ const App: React.FC = () => {
       {/* Main Content Area */}
       <main className="py-6">
         {view === 'LOG_TRIPS' && (
-           <AgentDashboard data={data} currentUser={currentUser} refreshData={refreshData} />
+           <AgentDashboard data={data} currentUser={currentUser} refreshData={fetchData} />
         )}
         {view === 'MESSAGES' && (
-           <MessagingView data={data} currentUser={currentUser} refreshData={refreshData} initialSelectedUserId={targetUserId} />
+           <MessagingView data={data} currentUser={currentUser} refreshData={fetchData} initialSelectedUserId={targetUserId} />
         )}
         {view === 'ADMIN_CONSOLE' && currentUser.role === UserRole.ADMIN && (
-           <AdminDashboard data={data} refreshData={refreshData} />
+           <AdminDashboard data={data} refreshData={fetchData} />
         )}
       </main>
 

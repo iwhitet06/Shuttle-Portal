@@ -181,7 +181,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
               </div>
               <div>
                 <h3 className="font-bold text-slate-800 text-sm">My Station</h3>
-                <p className="text-xs text-slate-500">Your current physical location (Hotel).</p>
+                <p className="text-xs text-slate-500">Your current physical location.</p>
               </div>
             </div>
             <div className="w-60">

@@ -200,7 +200,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                 <tr key={log.id} onClick={() => setExpandedLogId(expandedLogId === log.id ? null : log.id)} className="hover:bg-blue-50/50 cursor-pointer">
                     <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${log.status === TripStatus.IN_TRANSIT ? 'bg-green-100 text-green-700' : 'bg-slate-100'}`}>{log.status}</span></td>
                     <td className="p-4">{new Date(log.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}<div className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleDateString()}</div></td>
-                    <td className="p-4"><div className="font-medium">{getLocationName(log.departLocationId)} -> {getLocationName(log.arrivalLocationId)}</div></td>
+                    <td className="p-4"><div className="font-medium">{getLocationName(log.departLocationId)} &rarr; {getLocationName(log.arrivalLocationId)}</div></td>
                     <td className="p-4"><div className="font-bold">{log.companyName}</div><div className="text-xs">Bus {log.busNumber}</div></td>
                     <td className="p-4">{log.passengerCount}</td>
                     <td className="p-4">

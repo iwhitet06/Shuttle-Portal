@@ -360,6 +360,23 @@ export const createLog = async (entry: Omit<LogEntry, 'id' | 'timestamp' | 'stat
   return mapLogEntry(data);
 };
 
+export const updateLog = async (logId: string, updates: Partial<LogEntry>) => {
+  const dbUpdates: any = {};
+  if (updates.driverName) dbUpdates.driver_name = updates.driverName;
+  if (updates.companyName) dbUpdates.company_name = updates.companyName;
+  if (updates.busNumber) dbUpdates.bus_number = updates.busNumber;
+  if (updates.passengerCount !== undefined) dbUpdates.passenger_count = updates.passengerCount;
+  if (updates.timestamp) dbUpdates.timestamp = updates.timestamp;
+  if (updates.status) dbUpdates.status = updates.status;
+  if (updates.eta) dbUpdates.eta = updates.eta;
+  
+  await supabase.from('logs').update(dbUpdates).eq('id', logId);
+};
+
+export const deleteLog = async (logId: string) => {
+  await supabase.from('logs').delete().eq('id', logId);
+};
+
 export const createBusCheckIn = async (entry: Omit<BusCheckIn, 'id' | 'timestamp'>): Promise<BusCheckIn | null> => {
   const dbEntry = {
     user_id: entry.userId,
@@ -373,6 +390,10 @@ export const createBusCheckIn = async (entry: Omit<BusCheckIn, 'id' | 'timestamp
   const { data, error } = await supabase.from('bus_checkins').insert([dbEntry]).select().single();
   if (error) return null;
   return mapBusCheckIn(data);
+};
+
+export const updateBusCheckIn = async (id: string, timestamp: string) => {
+  await supabase.from('bus_checkins').update({ timestamp }).eq('id', id);
 };
 
 export const markTripArrived = async (logId: string): Promise<void> => {
@@ -408,10 +429,14 @@ export const updateUserStatus = async (userId: string, status: UserStatus) => {
 };
 
 export const toggleUserRole = async (userId: string) => {
-  // Need to fetch current role first or do a stored proc, but simple fetch-update is fine for this scale
+  // Fetch current role
   const { data } = await supabase.from('users').select('role').eq('id', userId).single();
   if (data) {
-    const newRole = data.role === UserRole.ADMIN ? UserRole.AGENT : UserRole.ADMIN;
+    let newRole = UserRole.AGENT;
+    if (data.role === UserRole.AGENT) newRole = UserRole.ONSITE_COORDINATOR;
+    else if (data.role === UserRole.ONSITE_COORDINATOR) newRole = UserRole.ADMIN;
+    else newRole = UserRole.AGENT; // Rotate back to Agent
+    
     await supabase.from('users').update({ role: newRole }).eq('id', userId);
   }
 };

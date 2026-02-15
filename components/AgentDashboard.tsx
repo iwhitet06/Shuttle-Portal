@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { AppData, User, RouteType, LocationType, LogEntry, TripStatus, UserRole } from '../types';
-import { createLog, markTripArrived, createBusCheckIn, updateUserLocation, updateUserAssignedWorksite } from '../services/supabaseService';
+import { AppData, User, RouteType, LocationType, LogEntry, TripStatus, UserRole, BusCheckIn } from '../types';
+import { createLog, markTripArrived, createBusCheckIn, updateUserLocation, updateUserAssignedWorksite, updateBusCheckIn } from '../services/supabaseService';
 import { SearchableDropdown } from './SearchableDropdown';
-import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X, Loader2 } from 'lucide-react';
+import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X, Loader2, Edit2, Save } from 'lucide-react';
 
 interface AgentDashboardProps {
   data: AppData;
@@ -30,6 +30,10 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   
   // Check-in State
   const [checkInLocId, setCheckInLocId] = useState('');
+
+  // Check-in Edit State
+  const [editingCheckInId, setEditingCheckInId] = useState<string | null>(null);
+  const [editingCheckInTime, setEditingCheckInTime] = useState('');
 
   const [successMsg, setSuccessMsg] = useState('');
   
@@ -168,6 +172,22 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   const handleWorksiteChange = async (val: string) => {
     await updateUserAssignedWorksite(currentUser.id, val);
     refreshData();
+  };
+
+  const startEditCheckIn = (checkIn: BusCheckIn) => {
+      setEditingCheckInId(checkIn.id);
+      const d = new Date(checkIn.timestamp);
+      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+      setEditingCheckInTime(d.toISOString().slice(0, 16));
+  };
+
+  const saveCheckInTime = async () => {
+      if(editingCheckInId && editingCheckInTime) {
+          const newTime = new Date(editingCheckInTime).toISOString();
+          await updateBusCheckIn(editingCheckInId, newTime);
+          setEditingCheckInId(null);
+          refreshData();
+      }
   };
 
   return (
@@ -620,8 +640,27 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                         </div>
                       </div>
                       <div className="text-right text-sm text-slate-500">
-                        <div className="font-bold text-slate-800">{new Date(checkIn.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</div>
-                        <div className="text-xs text-slate-400">{new Date(checkIn.timestamp).toLocaleDateString()}</div>
+                        {editingCheckInId === checkIn.id ? (
+                            <div className="flex flex-col items-end gap-1">
+                                <input 
+                                    type="datetime-local" 
+                                    className="border rounded p-1 text-xs" 
+                                    value={editingCheckInTime}
+                                    onChange={(e) => setEditingCheckInTime(e.target.value)}
+                                />
+                                <button onClick={saveCheckInTime} className="bg-blue-600 text-white px-2 py-1 rounded text-xs flex items-center gap-1">
+                                    <Save size={12} /> Save
+                                </button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="font-bold text-slate-800 flex items-center justify-end gap-1 group cursor-pointer" onClick={() => startEditCheckIn(checkIn)}>
+                                    {new Date(checkIn.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                                    <Edit2 size={12} className="opacity-0 group-hover:opacity-100 text-blue-500" />
+                                </div>
+                                <div className="text-xs text-slate-400">{new Date(checkIn.timestamp).toLocaleDateString()}</div>
+                            </>
+                        )}
                       </div>
                   </div>
                 ))}

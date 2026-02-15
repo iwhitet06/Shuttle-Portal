@@ -160,6 +160,8 @@ const App: React.FC = () => {
     );
   }
 
+  const canAccessAdminConsole = currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.ONSITE_COORDINATOR;
+
   return (
     <div className="min-h-screen bg-slate-100 pb-20 md:pb-0">
       {/* Top Navigation */}
@@ -190,7 +192,7 @@ const App: React.FC = () => {
                >
                  Messages
                </button>
-               {currentUser.role === UserRole.ADMIN && (
+               {canAccessAdminConsole && (
                  <button 
                    onClick={() => setView('ADMIN_CONSOLE')}
                    className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition ${view === 'ADMIN_CONSOLE' ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
@@ -309,8 +311,8 @@ const App: React.FC = () => {
         {view === 'MESSAGES' && (
            <MessagingView data={data} currentUser={currentUser} refreshData={fetchData} initialSelectedUserId={targetUserId} />
         )}
-        {view === 'ADMIN_CONSOLE' && currentUser.role === UserRole.ADMIN && (
-           <AdminDashboard data={data} refreshData={fetchData} />
+        {view === 'ADMIN_CONSOLE' && canAccessAdminConsole && (
+           <AdminDashboard data={data} refreshData={fetchData} currentUser={currentUser} />
         )}
       </main>
 
@@ -330,7 +332,7 @@ const App: React.FC = () => {
           <MessageSquare size={24} />
           <span className="text-[10px] font-medium">Messages</span>
         </button>
-        {currentUser.role === UserRole.ADMIN && (
+        {canAccessAdminConsole && (
           <button 
             onClick={() => setView('ADMIN_CONSOLE')}
             className={`flex flex-col items-center space-y-1 ${view === 'ADMIN_CONSOLE' ? 'text-blue-600' : 'text-slate-400'}`}

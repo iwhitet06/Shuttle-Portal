@@ -1,6 +1,8 @@
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   AGENT = 'AGENT',
+  ONSITE_COORDINATOR = 'ONSITE_COORDINATOR',
 }
 
 export enum UserStatus {

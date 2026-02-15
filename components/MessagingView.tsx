@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppData, User, UserRole, LocationType } from '../types';
 import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/supabaseService';
-import { Send, User as UserIcon, Briefcase, BadgeCheck } from 'lucide-react';
+import { Send, User as UserIcon, Briefcase, BadgeCheck, Plus, X } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -14,6 +14,8 @@ interface MessagingViewProps {
 export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser, refreshData, initialSelectedUserId }) => {
   const [selectedUserId, setSelectedUserId] = useState<string | null>(initialSelectedUserId || null);
   const [msgContent, setMsgContent] = useState('');
+  const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+  const [newChatSearch, setNewChatSearch] = useState('');
 
   // Update selected user if the prop changes (e.g. navigation from search)
   useEffect(() => {
@@ -24,6 +26,8 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
 
   const handleSelectUser = async (id: string) => {
       setSelectedUserId(id);
+      setIsNewChatOpen(false);
+      setNewChatSearch('');
       await markMessagesAsRead(id, currentUser.id); // Mark messages from sender to me as read
       refreshData();
   };
@@ -33,7 +37,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
     refreshData();
   };
 
-  // Get active worksites for the dropdown, filtered by permissions
+  // Get active worksites for the dropdown
   const allowedIds = currentUser.permissions.allowedLocationIds;
   const activeWorksites = data.locations.filter(l => {
      if (!l.isActive) return false;
@@ -42,7 +46,14 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
      return allowedIds.includes(l.id);
   });
 
-  // Get list of users to message with metadata for sorting and badges
+  // Calculate active conversations (Filter)
+  const existingConversationUserIds = new Set<string>();
+  data.messages.forEach(m => {
+      if (m.fromUserId === currentUser.id) existingConversationUserIds.add(m.toUserId);
+      if (m.toUserId === currentUser.id) existingConversationUserIds.add(m.fromUserId);
+  });
+
+  // Base list of users to display in sidebar
   const allUsers = data.users
     .filter(u => u.id !== currentUser.id && u.status === 'ACTIVE')
     .map(u => {
@@ -55,25 +66,32 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
         const unreadCount = msgs.filter(m => m.fromUserId === u.id && m.toUserId === currentUser.id && !m.isRead).length;
 
         // Check if this user is a coordinator for my assigned worksite
-        // They must be an ADMIN and physically located at my assigned worksite
         const isCoordinator = 
             currentUser.assignedWorksiteId && 
-            u.role === UserRole.ADMIN && 
+            (u.role === UserRole.ADMIN || u.role === UserRole.ONSITE_COORDINATOR) && 
             u.currentLocationId === currentUser.assignedWorksiteId;
+
+        // Determine if user should show in sidebar:
+        // 1. Is Coordinator (Always show important contact)
+        // 2. Has existing conversation
+        const shouldShow = isCoordinator || existingConversationUserIds.has(u.id);
 
         return {
             user: u,
             lastMsgTime: lastMsg ? new Date(lastMsg.timestamp).getTime() : 0,
             unreadCount,
-            isCoordinator
+            isCoordinator,
+            shouldShow
         };
     });
 
-  // Split into Coordinators and Others
-  const coordinators = allUsers.filter(u => u.isCoordinator);
-  const others = allUsers
-    .filter(u => !u.isCoordinator)
-    .sort((a, b) => b.lastMsgTime - a.lastMsgTime); // Sort by most recent message
+  // Filter for display
+  const displayUsers = allUsers.filter(u => u.shouldShow).sort((a, b) => {
+      // Coordinators first, then by recent message
+      if (a.isCoordinator && !b.isCoordinator) return -1;
+      if (!a.isCoordinator && b.isCoordinator) return 1;
+      return b.lastMsgTime - a.lastMsgTime;
+  });
 
   // Filter messages for selected conversation
   const conversation = selectedUserId 
@@ -110,7 +128,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                     On-site Coordinator
                 </div>
             ) : (
-                <div className="text-xs text-slate-500 uppercase">{user.role}</div>
+                <div className="text-xs text-slate-500 uppercase">{user.role.replace('_', ' ')}</div>
             )}
           </div>
       </div>
@@ -121,6 +139,14 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
       )}
     </button>
   );
+
+  // New Chat Selection List
+  const potentialNewChatUsers = data.users
+    .filter(u => u.id !== currentUser.id && u.status === 'ACTIVE')
+    .filter(u => {
+        const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
+        return fullName.includes(newChatSearch.toLowerCase());
+    });
 
   return (
     <div className="h-[calc(100vh-100px)] max-w-6xl mx-auto flex flex-col md:flex-row bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
@@ -141,29 +167,64 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                 compact={true}
             />
             <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                Select your worksite to see the assigned On-site Coordinator at the top of your list.
+                Select your worksite to find your coordinator.
             </p>
         </div>
 
-        <div className="p-3 border-b border-slate-100 bg-slate-50">
-          <h3 className="font-bold text-slate-700 text-sm">Contacts</h3>
+        <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
+          <h3 className="font-bold text-slate-700 text-sm">Chats</h3>
+          <button 
+            onClick={() => setIsNewChatOpen(true)}
+            className="p-1 text-blue-600 hover:bg-blue-100 rounded-full transition"
+            title="New Chat"
+          >
+            <Plus size={20} />
+          </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          {/* Coordinators Section */}
-          {coordinators.length > 0 && (
-            <div className="border-b border-indigo-100">
-                {coordinators.map(item => renderUserItem(item))}
-            </div>
+        <div className="flex-1 overflow-y-auto relative">
+          {displayUsers.length > 0 ? (
+             displayUsers.map(item => renderUserItem(item))
+          ) : (
+              <div className="p-8 text-center text-slate-400 text-sm">
+                  No active chats. Start a new one!
+              </div>
           )}
 
-          {/* Others Section */}
-          {others.map(item => renderUserItem(item))}
-          
-          {others.length === 0 && coordinators.length === 0 && (
-              <div className="p-8 text-center text-slate-400 text-sm">
-                  No active contacts found.
-              </div>
+          {/* New Chat Modal/Overlay */}
+          {isNewChatOpen && (
+            <div className="absolute inset-0 bg-white z-20 flex flex-col animate-fadeIn">
+                <div className="p-3 border-b border-slate-200 flex items-center gap-2">
+                    <input 
+                        type="text" 
+                        autoFocus
+                        placeholder="Search users..."
+                        className="flex-1 bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={newChatSearch}
+                        onChange={e => setNewChatSearch(e.target.value)}
+                    />
+                    <button onClick={() => setIsNewChatOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={20} />
+                    </button>
+                </div>
+                <div className="flex-1 overflow-y-auto">
+                    {potentialNewChatUsers.map(u => (
+                        <button
+                            key={u.id}
+                            onClick={() => handleSelectUser(u.id)}
+                            className="w-full text-left p-3 hover:bg-blue-50 border-b border-slate-50 flex items-center gap-3"
+                        >
+                            <div className="bg-slate-200 p-2 rounded-full text-slate-500">
+                                <UserIcon size={16} />
+                            </div>
+                            <div>
+                                <div className="font-medium text-slate-800 text-sm">{u.firstName} {u.lastName}</div>
+                                <div className="text-xs text-slate-500">{u.role.replace('_', ' ')}</div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </div>
           )}
         </div>
       </div>
@@ -194,7 +255,9 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                             {allUsers.find(item => item.user.id === selectedUserId)?.user.firstName} {allUsers.find(item => item.user.id === selectedUserId)?.user.lastName}
                         </div>
                         <div className="text-xs text-slate-500">
-                             {allUsers.find(item => item.user.id === selectedUserId)?.isCoordinator ? 'On-site Coordinator' : 'TransitFlow User'}
+                             {allUsers.find(item => item.user.id === selectedUserId)?.isCoordinator 
+                                ? 'On-site Coordinator' 
+                                : allUsers.find(item => item.user.id === selectedUserId)?.user.role.replace('_', ' ')}
                         </div>
                    </div>
                </div>

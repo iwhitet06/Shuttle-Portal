@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry } from '../types';
 import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog } from '../services/supabaseService';
-import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2 } from 'lucide-react';
+import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2, ShieldCheck } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -50,8 +50,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const isFullAdmin = currentUser?.role === UserRole.ADMIN;
 
   const handleAction = async (action: () => Promise<void>) => {
-    await action();
-    refreshData();
+    try {
+        await action();
+        refreshData();
+    } catch (e) {
+        console.error("Action failed:", e);
+    }
   };
 
   const handleLocationSubmit = async (e: React.FormEvent) => {
@@ -169,6 +173,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       alert("Exporting CSV..."); 
   };
 
+  // Helper to check for protected System Admin
+  const isSystemAdminUser = (user: User) => {
+      return user.phone === '000-000-0000';
+  };
+
   const renderLogs = () => (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col mt-6">
       <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
@@ -219,16 +228,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     <tr><th className="p-4">User</th><th className="p-4">Phone</th><th className="p-4">Role</th><th className="p-4">Status</th><th className="p-4">Loc Access</th><th className="p-4 text-right">Actions</th></tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                    {activeUsers.map(user => (
+                    {activeUsers.map(user => {
+                        const isSystemAdmin = isSystemAdminUser(user);
+                        return (
                         <tr key={user.id} className="hover:bg-slate-50">
-                            <td className="p-4 font-bold">{user.firstName} {user.lastName}</td>
+                            <td className="p-4 font-bold">
+                                {user.firstName} {user.lastName}
+                                {isSystemAdmin && <span className="ml-2 text-[10px] bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded border border-yellow-200 uppercase tracking-wide">SysAdmin</span>}
+                            </td>
                             <td className="p-4 font-mono text-slate-500">{user.phone}</td>
                             <td className="p-4">
                                 <div className="relative inline-block w-40">
                                     <select 
-                                        value={user.role} 
-                                        onChange={(e) => handleAction(() => updateUserRole(user.id, e.target.value as UserRole))}
-                                        className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 ${
+                                        value={user.role}
+                                        disabled={isSystemAdmin}
+                                        onChange={async (e) => {
+                                            const newRole = e.target.value as UserRole;
+                                            await updateUserRole(user.id, newRole);
+                                            refreshData();
+                                        }}
+                                        className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
                                             user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500' :
                                             user.role === UserRole.ONSITE_COORDINATOR ? 'bg-indigo-50 text-indigo-700 border-indigo-200 focus:ring-indigo-500' :
                                             'bg-slate-50 text-slate-600 border-slate-200 focus:ring-slate-500'
@@ -238,17 +257,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                                         <option value={UserRole.ONSITE_COORDINATOR}>COORDINATOR</option>
                                         <option value={UserRole.ADMIN}>ADMIN</option>
                                     </select>
-                                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>
+                                    {!isSystemAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>}
+                                    {isSystemAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><Lock size={12} /></div>}
                                 </div>
                             </td>
                             <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{user.status}</span></td>
                             <td className="p-4"><button onClick={() => openPermissionsModal(user)} className="text-blue-600 underline text-xs">Manage ({user.permissions.allowedLocationIds?.length || 'All'})</button></td>
                             <td className="p-4 text-right">
-                                {user.status === UserStatus.PENDING && <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="text-green-600 font-bold mr-2">Approve</button>}
-                                <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="text-red-600 hover:bg-red-50 p-1 rounded"><XCircle size={16}/></button>
+                                {isSystemAdmin ? (
+                                    <span className="text-slate-400 text-xs italic flex items-center justify-end gap-1"><ShieldCheck size={14}/> Protected</span>
+                                ) : (
+                                    <>
+                                        {user.status === UserStatus.PENDING && <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="text-green-600 font-bold mr-2">Approve</button>}
+                                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="text-red-600 hover:bg-red-50 p-1 rounded" title="Revoke Access"><XCircle size={16}/></button>
+                                    </>
+                                )}
                             </td>
                         </tr>
-                    ))}
+                    )})}
                 </tbody>
             </table>
         </div>

@@ -1,5 +1,14 @@
-import { GoogleGenAI } from "@google/genai";
+// This service has been disabled to remove the dependency on Google GenAI.
+// To re-enable, install @google/genai and uncomment the code below.
+
 import { LogEntry, Location } from "../types";
+
+export const analyzeLogs = async (logs: LogEntry[], locations: Location[]) => {
+  return "AI Analysis is currently disabled.";
+};
+
+/*
+import { GoogleGenAI } from "@google/genai";
 
 const getClient = () => {
   const apiKey = process.env.API_KEY;
@@ -49,3 +58,4 @@ export const analyzeLogs = async (logs: LogEntry[], locations: Location[]) => {
     return "Unable to generate analysis at this time. Please check API configuration.";
   }
 };
+*/

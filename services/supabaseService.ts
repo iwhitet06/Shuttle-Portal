@@ -25,18 +25,36 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- HELPER FUNCTIONS ---
 
-const mapUser = (data: any): User => ({
-  id: data.id,
-  firstName: data.first_name,
-  lastName: data.last_name,
-  phone: data.phone,
-  role: data.role as UserRole,
-  status: data.status as UserStatus,
-  permissions: data.permissions || { canViewHistory: true, canLogTrips: true },
-  joinedAt: data.joined_at,
-  currentLocationId: data.current_location_id,
-  assignedWorksiteId: data.assigned_worksite_id
-});
+const mapUser = (data: any): User => {
+  // SECURITY OVERRIDE: 000-000-0000 is ALWAYS System Admin
+  if (data.phone === '000-000-0000') {
+    return {
+      id: data.id,
+      firstName: data.first_name,
+      lastName: data.last_name,
+      phone: data.phone,
+      role: UserRole.ADMIN,
+      status: UserStatus.ACTIVE,
+      permissions: { canViewHistory: true, canLogTrips: true, allowedLocationIds: undefined }, // Full access
+      joinedAt: data.joined_at,
+      currentLocationId: data.current_location_id,
+      assignedWorksiteId: data.assigned_worksite_id
+    };
+  }
+
+  return {
+    id: data.id,
+    firstName: data.first_name,
+    lastName: data.last_name,
+    phone: data.phone,
+    role: data.role as UserRole,
+    status: data.status as UserStatus,
+    permissions: data.permissions || { canViewHistory: true, canLogTrips: true },
+    joinedAt: data.joined_at,
+    currentLocationId: data.current_location_id,
+    assignedWorksiteId: data.assigned_worksite_id
+  };
+};
 
 const mapLocation = (data: any): Location => ({
   id: data.id,
@@ -102,12 +120,14 @@ export const loadData = async (): Promise<AppData> => {
 };
 
 export const registerUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
+  const isSystemAdmin = phone === '000-000-0000';
+  
   const newUser = {
     first_name: firstName,
     last_name: lastName,
     phone: phone,
-    role: UserRole.AGENT,
-    status: UserStatus.PENDING,
+    role: isSystemAdmin ? UserRole.ADMIN : UserRole.AGENT,
+    status: isSystemAdmin ? UserStatus.ACTIVE : UserStatus.PENDING,
     permissions: { canViewHistory: true, canLogTrips: true }
   };
   const { data, error } = await supabase.from('users').insert([newUser]).select().single();

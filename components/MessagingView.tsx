@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { AppData, User, UserRole } from '../types';
-import { sendMessage, markMessagesAsRead, updateUserLocation } from '../services/mockBackend';
-import { Send, User as UserIcon, MapPin, BadgeCheck } from 'lucide-react';
+import { AppData, User, UserRole, LocationType } from '../types';
+import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/mockBackend';
+import { Send, User as UserIcon, Briefcase, BadgeCheck } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -28,15 +28,16 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
       refreshData();
   };
 
-  const handleLocationChange = (val: string) => {
-    updateUserLocation(currentUser.id, val);
+  const handleWorksiteChange = (val: string) => {
+    updateUserAssignedWorksite(currentUser.id, val);
     refreshData();
   };
 
-  // Get active locations for the dropdown, filtered by permissions
+  // Get active worksites for the dropdown, filtered by permissions
   const allowedIds = currentUser.permissions.allowedLocationIds;
-  const activeLocations = data.locations.filter(l => {
+  const activeWorksites = data.locations.filter(l => {
      if (!l.isActive) return false;
+     if (l.type !== LocationType.WORKSITE) return false;
      if (!allowedIds || allowedIds.length === 0) return true;
      return allowedIds.includes(l.id);
   });
@@ -53,12 +54,12 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
         const lastMsg = msgs[0];
         const unreadCount = msgs.filter(m => m.fromUserId === u.id && m.toUserId === currentUser.id && !m.isRead).length;
 
-        // Check if this user is a coordinator for my current location
-        // They must be an ADMIN and at the SAME location as me
+        // Check if this user is a coordinator for my assigned worksite
+        // They must be an ADMIN and physically located at my assigned worksite
         const isCoordinator = 
-            currentUser.currentLocationId && 
+            currentUser.assignedWorksiteId && 
             u.role === UserRole.ADMIN && 
-            u.currentLocationId === currentUser.currentLocationId;
+            u.currentLocationId === currentUser.assignedWorksiteId;
 
         return {
             user: u,
@@ -127,20 +128,20 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
       {/* Sidebar List */}
       <div className={`md:w-1/3 border-r border-slate-200 flex flex-col ${selectedUserId ? 'hidden md:flex' : 'flex'}`}>
         
-        {/* Location Selector Box */}
+        {/* Worksite Selector Box */}
         <div className="p-4 bg-slate-100 border-b border-slate-200">
             <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                <MapPin size={12} /> My Current Location
+                <Briefcase size={12} /> My Assigned Worksite
             </label>
             <SearchableDropdown 
-                options={activeLocations} 
-                value={currentUser.currentLocationId || ''} 
-                onChange={handleLocationChange} 
-                placeholder="Select your location..."
+                options={activeWorksites} 
+                value={currentUser.assignedWorksiteId || ''} 
+                onChange={handleWorksiteChange} 
+                placeholder="Select your worksite..."
                 compact={true}
             />
             <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                Select your location to see the assigned On-site Coordinator at the top of your list.
+                Select your worksite to see the assigned On-site Coordinator at the top of your list.
             </p>
         </div>
 
@@ -174,9 +175,9 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
             <div className="text-center">
                 <Send size={48} className="mx-auto mb-4 opacity-20" />
                 <p>Select a user to start messaging</p>
-                {(!currentUser.currentLocationId) && (
+                {(!currentUser.assignedWorksiteId) && (
                     <p className="text-xs text-orange-500 mt-2">
-                        Tip: Select your location to find your coordinator.
+                        Tip: Select your worksite to find your coordinator.
                     </p>
                 )}
             </div>

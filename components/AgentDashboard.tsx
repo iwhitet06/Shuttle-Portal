@@ -241,7 +241,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
         {isConfigOpen && (
             <div className="px-4 py-4 bg-slate-50 border-t border-slate-100 space-y-4 shadow-inner">
                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">My Physical Location (Hotel)</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">My Physical Location</label>
                     <SearchableDropdown 
                         options={activeLocations} 
                         value={currentUser.currentLocationId || ''} 

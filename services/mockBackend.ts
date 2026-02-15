@@ -2,6 +2,26 @@ import { User, Location, LogEntry, Message, UserRole, UserStatus, LocationType, 
 
 const STORAGE_KEY = 'transitflow_db_v2';
 
+const DEFAULT_PERMISSIONS: UserPermissions = {
+  canViewHistory: true,
+  canLogTrips: true,
+  allowedLocationIds: undefined // Default to all access
+};
+
+const INITIAL_USERS: User[] = [
+  {
+    id: 'sys-admin',
+    firstName: 'System',
+    lastName: 'Admin',
+    phone: '000-000-0000',
+    role: UserRole.ADMIN,
+    status: UserStatus.ACTIVE,
+    permissions: DEFAULT_PERMISSIONS,
+    joinedAt: new Date().toISOString(),
+    currentLocationId: 'hotel-1'
+  }
+];
+
 const INITIAL_LOCATIONS: Location[] = [
   // Hotels (Preserved)
   { id: 'hotel-1', name: 'Courtyard by Marriott Los Angeles Hacienda Heights/Orange County', type: LocationType.HOTEL, isActive: true, address: '1905 S Azusa Ave, Hacienda Heights, CA 91745' },
@@ -155,12 +175,6 @@ const INITIAL_LOCATIONS: Location[] = [
 // Sort locations alphabetically
 INITIAL_LOCATIONS.sort((a, b) => a.name.localeCompare(b.name));
 
-const DEFAULT_PERMISSIONS: UserPermissions = {
-  canViewHistory: true,
-  canLogTrips: true,
-  allowedLocationIds: undefined // Default to all access
-};
-
 // Helper to generate IDs
 const generateId = () => Math.random().toString(36).substr(2, 9);
 
@@ -169,6 +183,12 @@ export const loadData = (): AppData => {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored) {
     const parsed = JSON.parse(stored);
+    
+    // Ensure the system admin exists if the DB was wiped or is empty
+    if (!parsed.users || parsed.users.length === 0) {
+        parsed.users = INITIAL_USERS;
+    }
+
     // Migration helper for old data
     if (parsed.users.length > 0) {
       parsed.users = parsed.users.map((u: any) => {
@@ -189,7 +209,7 @@ export const loadData = (): AppData => {
     return parsed;
   }
   return {
-    users: [],
+    users: INITIAL_USERS,
     locations: INITIAL_LOCATIONS,
     logs: [],
     busCheckIns: [],
@@ -217,6 +237,8 @@ export const registerUser = (firstName: string, lastName: string, phone: string)
     firstName,
     lastName,
     phone,
+    // With seeded admin, isFirstUser will effectively always be false for new registrations
+    // This ensures new users are always PENDING AGENTS unless they are the seeded admin.
     role: isFirstUser ? UserRole.ADMIN : UserRole.AGENT,
     status: isFirstUser ? UserStatus.ACTIVE : UserStatus.PENDING,
     permissions: DEFAULT_PERMISSIONS,

@@ -39,11 +39,20 @@ const App: React.FC = () => {
   }, []);
 
   const refreshData = () => {
-    setData(loadData());
+    const newData = loadData();
+    setData(newData);
+    
     // Also update current user object if their status changed remotely
     if (currentUser) {
-        const updatedUser = loadData().users.find(u => u.id === currentUser.id);
-        if (updatedUser) setCurrentUser(updatedUser);
+        const updatedUser = newData.users.find(u => u.id === currentUser.id);
+        if (updatedUser) {
+            setCurrentUser(updatedUser);
+        } else {
+            // Security fallback: User was removed from DB (e.g. wiped or race condition overwrite)
+            // Force logout to prevent "ghost" sessions where user is logged in but invisible to admin
+            setCurrentUser(null);
+            setView('LOG_TRIPS');
+        }
     }
   };
 

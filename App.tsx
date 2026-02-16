@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { User, AppData, UserStatus, UserRole, RouteType } from './types';
-import { loadData } from './services/supabaseService';
+import { loadData, cleanupStaleTrips } from './services/supabaseService';
 import { LoginScreen } from './components/LoginScreen';
 import { AgentDashboard } from './components/AgentDashboard';
 import { AdminDashboard } from './components/AdminDashboard';
@@ -43,7 +43,14 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    fetchData(); // Initial load
+    // Perform cleanup and initial fetch
+    const init = async () => {
+      // Run cleanup for any stale trips (yesterday's trips left active)
+      await cleanupStaleTrips();
+      // Then fetch clean data
+      fetchData();
+    };
+    init();
 
     // Poll for updates
     const interval = setInterval(() => {

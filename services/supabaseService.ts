@@ -279,3 +279,37 @@ export const updateLocation = async (id: string, updates: Partial<Location>) => 
   if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive;
   await supabase.from('locations').update(dbUpdates).eq('id', id);
 };
+
+// --- DAILY CLEANUP LOGIC ---
+export const cleanupStaleTrips = async () => {
+  // 1. Fetch active trips
+  const { data: activeTrips, error } = await supabase
+    .from('logs')
+    .select('*')
+    .eq('status', TripStatus.IN_TRANSIT);
+
+  if (error || !activeTrips || activeTrips.length === 0) return;
+
+  // 2. Calculate Midnight PST for Today
+  // This ensures we check against the start of the current day in the specific timezone
+  const pstNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+  const pstTodayMidnight = new Date(pstNow);
+  pstTodayMidnight.setHours(0, 0, 0, 0);
+
+  // 3. Process updates
+  const updates = activeTrips.map(async (trip) => {
+    // Convert the trip timestamp (UTC/ISO) to PST
+    const tripTimePST = new Date(new Date(trip.timestamp).toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
+    
+    // If the trip happened before midnight today (PST), it belongs to a previous day
+    if (tripTimePST < pstTodayMidnight) {
+       await supabase.from('logs').update({ 
+           status: TripStatus.ARRIVED,
+           actual_arrival_time: new Date().toISOString(), // Auto-close timestamp
+           notes: trip.notes ? trip.notes + " [Auto-closed]" : "[Auto-closed]"
+       }).eq('id', trip.id);
+    }
+  });
+
+  await Promise.all(updates);
+};

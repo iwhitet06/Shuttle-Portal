@@ -871,6 +871,91 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
               </div>
           </div>
       )}
+
+      {/* Edit Log Modal */}
+      {editingLog && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col animate-fadeIn">
+                  <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+                      <div>
+                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
+                            <Edit2 size={20} className="text-blue-600" />
+                            Edit Trip Log
+                        </h3>
+                        <p className="text-sm text-slate-500 mt-1">ID: {editingLog.id}</p>
+                      </div>
+                      <button onClick={() => setEditingLog(null)} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 transition">
+                          <X size={20} />
+                      </button>
+                  </div>
+                  
+                  <div className="p-6 overflow-y-auto space-y-4">
+                      <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Driver Name</label>
+                          <input 
+                              type="text" 
+                              value={editLogDriver} 
+                              onChange={e => setEditLogDriver(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                      </div>
+                      <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Company</label>
+                          <input 
+                              type="text" 
+                              value={editLogCompany} 
+                              onChange={e => setEditLogCompany(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                      </div>
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bus Number</label>
+                              <input 
+                                  type="text" 
+                                  value={editLogBusNo} 
+                                  onChange={e => setEditLogBusNo(e.target.value)}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Passengers</label>
+                              <input 
+                                  type="number" 
+                                  value={editLogPax} 
+                                  onChange={e => setEditLogPax(parseInt(e.target.value))}
+                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                              />
+                          </div>
+                      </div>
+                      <div>
+                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Departure Time</label>
+                          <input 
+                              type="datetime-local" 
+                              value={editLogTime} 
+                              onChange={e => setEditLogTime(e.target.value)}
+                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                          />
+                      </div>
+                  </div>
+                  
+                  <div className="p-6 border-t border-slate-200 bg-white flex justify-end space-x-3 rounded-b-xl">
+                      <button 
+                          onClick={() => setEditingLog(null)}
+                          className="px-5 py-2.5 rounded-xl text-slate-600 font-medium hover:bg-slate-50 border border-transparent hover:border-slate-200 transition"
+                      >
+                          Cancel
+                      </button>
+                      <button 
+                          onClick={saveLogEdit}
+                          className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98] flex items-center gap-2"
+                      >
+                          <Save size={16} /> Save Changes
+                      </button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

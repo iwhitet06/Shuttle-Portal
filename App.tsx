@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { User, AppData, UserStatus, UserRole, RouteType } from './types';
 import { loadData, cleanupStaleTrips, updateUserProfile } from './services/supabaseService';
@@ -7,10 +8,13 @@ import { AdminDashboard } from './components/AdminDashboard';
 import { MessagingView } from './components/MessagingView';
 import { LayoutDashboard, MessageSquare, LogOut, Clock, Shield, Bus, Settings, Search, X, User as UserIcon, Calendar, MapPin, Loader2, Sun, Moon } from 'lucide-react';
 
+const SESSION_KEY = 'shuttle_portal_session_v1';
+
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [data, setData] = useState<AppData | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [view, setView] = useState<'LOG_TRIPS' | 'MESSAGES' | 'ADMIN_CONSOLE'>('LOG_TRIPS');
   
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -40,18 +44,33 @@ const App: React.FC = () => {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
-  const fetchData = async () => {
+  // Unified data fetcher that also handles session restoration
+  const fetchData = async (isInitialLoad: boolean = false) => {
     try {
       const fetchedData = await loadData();
       setData(fetchedData);
       
-      if (currentUser) {
+      // Handle session restoration on initial boot
+      if (isInitialLoad) {
+        const savedUserId = localStorage.getItem(SESSION_KEY);
+        if (savedUserId) {
+          const user = fetchedData.users.find(u => u.id === savedUserId);
+          if (user) {
+            setCurrentUser(user);
+          } else {
+            // User no longer exists in DB
+            localStorage.removeItem(SESSION_KEY);
+          }
+        }
+        setIsRestoringSession(false);
+      } else if (currentUser) {
+        // Update current user state if they are already logged in to sync permissions/status
         const updatedUser = fetchedData.users.find(u => u.id === currentUser.id);
         if (updatedUser) {
           setCurrentUser(updatedUser);
         } else {
-          setCurrentUser(null);
-          setView('LOG_TRIPS');
+          // Force logout if user deleted from DB
+          handleLogout();
         }
       }
     } catch (error) {
@@ -64,7 +83,8 @@ const App: React.FC = () => {
   useEffect(() => {
     const init = async () => {
       await cleanupStaleTrips();
-      fetchData();
+      // Pass true to indicate this is the first load for session check
+      fetchData(true);
     };
     init();
 
@@ -85,6 +105,11 @@ const App: React.FC = () => {
     };
   }, []);
 
+  const handleLogin = (user: User) => {
+    localStorage.setItem(SESSION_KEY, user.id);
+    setCurrentUser(user);
+  };
+
   const handleUpdateProfile = async (updates: { currentLocationId?: string, assignedWorksiteIds?: string[] }) => {
       if (!currentUser) return;
       
@@ -96,15 +121,14 @@ const App: React.FC = () => {
 
       try {
         await updateUserProfile(currentUser.id, updates);
-        // Silently refresh data to sync others
         fetchData();
       } catch (e) {
         console.error("Failed to save profile", e);
-        // Revert on error could be added here, but keep simple for now
       }
   };
 
   const handleLogout = () => {
+    localStorage.removeItem(SESSION_KEY);
     setCurrentUser(null);
     setView('LOG_TRIPS');
     setSearchQuery('');
@@ -120,16 +144,23 @@ const App: React.FC = () => {
     setIsSearchOpen(false);
   };
 
-  if (isLoading && !data) {
+  // Show a specific loader while we check if the user was previously logged in
+  if (isRestoringSession || (isLoading && !data)) {
     return (
       <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center flex-col gap-4">
         <Loader2 className="w-10 h-10 text-blue-600 animate-spin" />
-        <p className="text-slate-500 dark:text-slate-400 font-medium">Connecting to Shuttle System...</p>
+        <p className="text-slate-500 dark:text-slate-400 font-medium">
+          {isRestoringSession ? 'Restoring session...' : 'Connecting to Shuttle System...'}
+        </p>
       </div>
     );
   }
 
   if (!data) return null;
+
+  if (!currentUser) {
+    return <LoginScreen onLogin={handleLogin} />;
+  }
 
   const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
   const unreadCount = currentUser ? data.messages.filter(m => m.toUserId === currentUser.id && !m.isRead).length : 0;
@@ -152,10 +183,6 @@ const App: React.FC = () => {
     setView('MESSAGES');
     clearSearch();
   };
-
-  if (!currentUser) {
-    return <LoginScreen onLogin={setCurrentUser} />;
-  }
 
   if (currentUser.status === UserStatus.PENDING) {
     return (

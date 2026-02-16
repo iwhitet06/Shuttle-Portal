@@ -17,6 +17,37 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   // Mobile Config State
   const [isConfigOpen, setIsConfigOpen] = useState(false);
 
+  // Local State for Dropdowns (Optimistic UI)
+  const [localLocationId, setLocalLocationId] = useState(currentUser.currentLocationId || '');
+  const [localWorksiteIds, setLocalWorksiteIds] = useState<string[]>(currentUser.assignedWorksiteIds || []);
+  
+  // Track if we have successfully synced initial data from server to prevent overwriting user edits
+  const [hasLoadedWorksites, setHasLoadedWorksites] = useState(false);
+
+  // Sync local state when currentUser updates from backend (e.g. initial load)
+  useEffect(() => {
+    // Always sync location if it changes externally and we aren't editing it (simplified: just sync if different)
+    if (currentUser.currentLocationId && currentUser.currentLocationId !== localLocationId) {
+        setLocalLocationId(currentUser.currentLocationId);
+    }
+
+    const serverIds = currentUser.assignedWorksiteIds || [];
+    
+    // Logic to prevent "fighting" between optimistic local state and stale polling data:
+    // Only sync from server if we haven't loaded yet, OR if the server provides data and we have none.
+    // Once loaded, we trust local state until a hard refresh.
+    if (!hasLoadedWorksites) {
+        if (serverIds.length > 0) {
+            setLocalWorksiteIds(serverIds);
+            setHasLoadedWorksites(true);
+        } else if (localWorksiteIds.length === 0) {
+            // Both empty, technically loaded, but we wait for potential data
+            // If user has NO assignments, this might prevent setting hasLoadedWorksites to true immediately,
+            // but that's fine, next interaction will set local state.
+        }
+    }
+  }, [currentUser.currentLocationId, currentUser.assignedWorksiteIds, hasLoadedWorksites]);
+
   // Trip State
   const [routeType, setRouteType] = useState<RouteType>(RouteType.HOTEL_TO_SITE);
   const [departId, setDepartId] = useState('');
@@ -41,20 +72,24 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   const [expandedNotes, setExpandedNotes] = useState<Set<string>>(new Set());
 
   const isAgent = currentUser.role === UserRole.AGENT;
+  const isAdmin = currentUser.role === UserRole.ADMIN;
 
   // Auto-fill logic when route type or locations change
   useEffect(() => {
     // If not manually set, try to default based on current profile settings
     if (activeTab === 'DEPARTURE') {
+        // Use first assigned worksite as default target if available
+        const defaultWorksite = localWorksiteIds.length > 0 ? localWorksiteIds[0] : '';
+        
         if (routeType === RouteType.HOTEL_TO_SITE) {
-            if (currentUser.currentLocationId) setDepartId(currentUser.currentLocationId);
-            if (currentUser.assignedWorksiteId) setArriveId(currentUser.assignedWorksiteId);
+            if (localLocationId) setDepartId(localLocationId);
+            if (defaultWorksite) setArriveId(defaultWorksite);
         } else {
-            if (currentUser.assignedWorksiteId) setDepartId(currentUser.assignedWorksiteId);
-            if (currentUser.currentLocationId) setArriveId(currentUser.currentLocationId);
+            if (defaultWorksite) setDepartId(defaultWorksite);
+            if (localLocationId) setArriveId(localLocationId);
         }
     }
-  }, [routeType, currentUser.currentLocationId, currentUser.assignedWorksiteId, activeTab]);
+  }, [routeType, localLocationId, localWorksiteIds, activeTab]);
 
   // Helpers
   const getUserName = (userId: string) => {
@@ -83,8 +118,9 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
     .filter(l => !isAgent || l.userId === currentUser.id) // Agents see own, Admins see all
     .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-  // Check-ins History logic
+  // Check-ins History logic (Filtered to TODAY)
   const recentCheckIns = (data.busCheckIns || [])
+    .filter(l => new Date(l.timestamp).toDateString() === new Date().toDateString())
     .filter(l => !isAgent || l.userId === currentUser.id)
     .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, 10);
@@ -165,13 +201,25 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   };
 
   const handleLocationChange = async (val: string) => {
+    setLocalLocationId(val); // Optimistic update
     await updateUserLocation(currentUser.id, val);
-    refreshData();
+    // Removed refreshData() to avoid race condition with polling
   };
 
-  const handleWorksiteChange = async (val: string) => {
-    await updateUserAssignedWorksite(currentUser.id, val);
-    refreshData();
+  const handleWorksiteChange = async (val: any) => {
+    // If multi-select is enabled (admin), val is string[]. Otherwise string.
+    let newIds: string[] = [];
+    if (Array.isArray(val)) {
+        newIds = val;
+    } else {
+        newIds = [val];
+    }
+    
+    setLocalWorksiteIds(newIds); // Optimistic update
+    setHasLoadedWorksites(true); // Mark as loaded so polling doesn't overwrite
+    await updateUserAssignedWorksite(currentUser.id, newIds);
+    // Removed refreshData() to avoid race condition with polling.
+    // The background poller in App.tsx will pick up changes eventually.
   };
 
   const startEditCheckIn = (checkIn: BusCheckIn) => {
@@ -208,7 +256,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
             <div className="w-60">
               <SearchableDropdown 
                 options={activeLocations} 
-                value={currentUser.currentLocationId || ''} 
+                value={localLocationId} 
                 onChange={handleLocationChange} 
                 placeholder="Select Location..."
                 compact={true}
@@ -222,17 +270,18 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                 <Briefcase size={20} className="text-indigo-600" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-800 text-sm">Assigned Worksite</h3>
-                <p className="text-xs text-slate-500">The destination hospital you are managing.</p>
+                <h3 className="font-bold text-slate-800 text-sm">Assigned Worksite{isAdmin ? 's' : ''}</h3>
+                <p className="text-xs text-slate-500">The destination hospital(s) you are managing.</p>
               </div>
             </div>
             <div className="w-60">
               <SearchableDropdown 
                 options={siteLocs} 
-                value={currentUser.assignedWorksiteId || ''} 
+                value={isAdmin ? localWorksiteIds : (localWorksiteIds[0] || '')} 
                 onChange={handleWorksiteChange} 
-                placeholder="Select Worksite..."
+                placeholder={isAdmin ? "Select Worksites..." : "Select Worksite..."}
                 compact={true}
+                multiple={isAdmin}
               />
             </div>
           </div>
@@ -248,9 +297,15 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                     <span className="flex items-center gap-1"><Briefcase size={10} /> Target</span>
                 </div>
                 <div className="flex items-center gap-2 text-sm font-bold text-slate-800 truncate">
-                    <span className="truncate max-w-[45%]">{currentUser.currentLocationId ? getLocationName(currentUser.currentLocationId) : 'Select Station'}</span>
+                    <span className="truncate max-w-[45%]">{localLocationId ? getLocationName(localLocationId) : 'Select Station'}</span>
                     <span className="text-slate-400">→</span>
-                    <span className="truncate max-w-[45%]">{currentUser.assignedWorksiteId ? getLocationName(currentUser.assignedWorksiteId) : 'Select Worksite'}</span>
+                    <span className="truncate max-w-[45%]">
+                        {localWorksiteIds.length > 0 
+                            ? (localWorksiteIds.length > 1 
+                                ? `${localWorksiteIds.length} Sites` 
+                                : getLocationName(localWorksiteIds[0]))
+                            : 'Select Worksite'}
+                    </span>
                 </div>
             </div>
             <button className="p-2 bg-slate-100 rounded-full text-slate-600">
@@ -265,20 +320,21 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">My Physical Location (Hotel)</label>
                     <SearchableDropdown 
                         options={activeLocations} 
-                        value={currentUser.currentLocationId || ''} 
+                        value={localLocationId} 
                         onChange={handleLocationChange} 
                         placeholder="Select Location..."
                         compact={true}
                     />
                 </div>
                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Assigned Worksite (Hospital)</label>
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Assigned Worksite(s) (Hospital)</label>
                     <SearchableDropdown 
                         options={siteLocs} 
-                        value={currentUser.assignedWorksiteId || ''} 
+                        value={isAdmin ? localWorksiteIds : (localWorksiteIds[0] || '')} 
                         onChange={handleWorksiteChange} 
                         placeholder="Select Worksite..."
                         compact={true}
+                        multiple={isAdmin}
                     />
                 </div>
                 <button 
@@ -617,14 +673,14 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
               <div className="p-4 border-b border-slate-100 bg-orange-50/50 flex justify-between items-center">
                   <h3 className="font-bold text-orange-900 flex items-center gap-2">
                     <History size={18} />
-                    Recent Bus Check-ins
+                    Recent Bus Check-ins (Today)
                   </h3>
               </div>
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {recentCheckIns.length === 0 && (
                     <div className="h-full flex flex-col items-center justify-center text-slate-400">
                       <ArrowDownCircle size={40} className="mb-2 opacity-20" />
-                      <p>No recent check-ins recorded.</p>
+                      <p>No recent check-ins recorded today.</p>
                     </div>
                 )}
                 {recentCheckIns.map(checkIn => (

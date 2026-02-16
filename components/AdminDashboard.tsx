@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry } from '../types';
-import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog } from '../services/supabaseService';
-import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2, ShieldCheck, CheckSquare, Square } from 'lucide-react';
+import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog, deleteBusCheckIn } from '../services/supabaseService';
+import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2, ShieldCheck, CheckSquare, Square, Briefcase } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { SearchableDropdown } from './SearchableDropdown';
 
@@ -134,6 +134,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       if(window.confirm('Are you sure you want to delete this log?')) { await deleteLog(logId); refreshData(); }
   };
 
+  const handleDeleteCheckIn = async (id: string) => {
+      if(window.confirm('Delete this check-in record?')) {
+          await deleteBusCheckIn(id);
+          refreshData();
+      }
+  };
+
   // Helper for 12-hour time format
   const formatTime = (dateStr: string) => {
     return new Date(dateStr).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit', hour12: true});
@@ -182,6 +189,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
 
   const activeUsers = filteredUsers.filter(u => u.status !== UserStatus.REVOKED);
   const revokedUsers = filteredUsers.filter(u => u.status === UserStatus.REVOKED);
+
+  // Filter Check-ins for Today
+  const todaysCheckIns = data.busCheckIns.filter(c => new Date(c.timestamp).toDateString() === new Date().toDateString());
 
   const exportCSV = () => {
       alert("Exporting CSV..."); 
@@ -369,13 +379,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
 
   const renderCheckIns = () => (
     <div className="bg-white rounded-xl shadow-sm border p-4">
-        <h3 className="font-bold text-orange-900 mb-4">Fleet Check-ins</h3>
-        <table className="w-full text-sm text-left">
-            <thead className="bg-orange-50 font-bold text-orange-800"><tr><th className="p-3">Time</th><th className="p-3">Loc</th><th className="p-3">Bus</th><th className="p-3">Driver</th></tr></thead>
-            <tbody>
-                {data.busCheckIns.map(c => <tr key={c.id} className="border-b"><td className="p-3">{formatTime(c.timestamp)}</td><td className="p-3">{getLocationName(c.locationId)}</td><td className="p-3">{c.companyName} #{c.busNumber}</td><td className="p-3">{c.driverName}</td></tr>)}
-            </tbody>
-        </table>
+        <h3 className="font-bold text-orange-900 mb-4 flex justify-between items-center">
+            <span>Fleet Check-ins (Today)</span>
+            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full">{todaysCheckIns.length}</span>
+        </h3>
+        {todaysCheckIns.length === 0 ? (
+            <div className="text-center p-8 text-slate-400 text-sm">No check-ins logged today.</div>
+        ) : (
+            <table className="w-full text-sm text-left">
+                <thead className="bg-orange-50 font-bold text-orange-800">
+                    <tr>
+                        <th className="p-3">Time</th>
+                        <th className="p-3">Loc</th>
+                        <th className="p-3">Bus</th>
+                        <th className="p-3">Driver</th>
+                        <th className="p-3 text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {todaysCheckIns.map(c => (
+                        <tr key={c.id} className="border-b">
+                            <td className="p-3">{formatTime(c.timestamp)}</td>
+                            <td className="p-3">{getLocationName(c.locationId)}</td>
+                            <td className="p-3">{c.companyName} #{c.busNumber}</td>
+                            <td className="p-3">{c.driverName}</td>
+                            <td className="p-3 text-right">
+                                <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded transition" title="Delete Check-in">
+                                    <Trash2 size={16} />
+                                </button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        )}
     </div>
   );
 
@@ -393,7 +430,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
             <tr>
               <th className="p-4">User Details</th>
               <th className="p-4">Contact</th>
-              <th className="p-4">Current Location</th>
+              <th className="p-4">Assignments</th>
               <th className="p-4">Role</th>
               <th className="p-4">Status</th>
               <th className="p-4">Permissions</th>
@@ -414,14 +451,41 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                 </td>
                 <td className="p-4 text-slate-500 font-mono">{user.phone}</td>
                 <td className="p-4">
-                    {user.currentLocationId ? (
-                        <span className="inline-flex items-center gap-1.5 text-blue-700 bg-blue-50 px-2.5 py-1 rounded text-xs font-medium border border-blue-100">
-                            <MapPin size={10} />
-                            {getLocationName(user.currentLocationId)}
-                        </span>
-                    ) : (
-                        <span className="text-slate-400 text-xs italic">Not set</span>
-                    )}
+                    <div className="space-y-2">
+                        {/* Station / Current Location */}
+                        <div className="flex items-start gap-1.5">
+                            <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                            <div>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-none mb-0.5">Station</span>
+                                {user.currentLocationId ? (
+                                    <span className="text-xs font-medium text-slate-700 block leading-tight">
+                                        {getLocationName(user.currentLocationId)}
+                                    </span>
+                                ) : (
+                                    <span className="text-xs text-slate-400 italic">Not stationed</span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Assigned Worksites */}
+                        <div className="flex items-start gap-1.5">
+                            <Briefcase size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
+                            <div>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-none mb-0.5">Targets</span>
+                                {user.assignedWorksiteIds && user.assignedWorksiteIds.length > 0 ? (
+                                    <div className="flex flex-col gap-1">
+                                        {user.assignedWorksiteIds.map(id => (
+                                            <span key={id} className="text-xs font-medium text-indigo-700 leading-tight">
+                                                {getLocationName(id)}
+                                            </span>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <span className="text-xs text-slate-400 italic">No assignments</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
                 </td>
                 <td className="p-4">
                     {/* Role Dropdown */}

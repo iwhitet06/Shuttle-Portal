@@ -38,7 +38,7 @@ const mapUser = (data: any): User => {
       permissions: { canViewHistory: true, canLogTrips: true, allowedLocationIds: undefined }, // Full access
       joinedAt: data.joined_at,
       currentLocationId: data.current_location_id,
-      assignedWorksiteId: data.assigned_worksite_id
+      assignedWorksiteIds: data.assigned_worksite_ids || (data.assigned_worksite_id ? [data.assigned_worksite_id] : [])
     };
   }
 
@@ -59,7 +59,7 @@ const mapUser = (data: any): User => {
     permissions: data.permissions || { canViewHistory: true, canLogTrips: true },
     joinedAt: data.joined_at,
     currentLocationId: data.current_location_id,
-    assignedWorksiteId: data.assigned_worksite_id
+    assignedWorksiteIds: data.assigned_worksite_ids || (data.assigned_worksite_id ? [data.assigned_worksite_id] : [])
   };
 };
 
@@ -200,6 +200,10 @@ export const updateBusCheckIn = async (id: string, timestamp: string) => {
   await supabase.from('bus_checkins').update({ timestamp }).eq('id', id);
 };
 
+export const deleteBusCheckIn = async (id: string) => {
+  await supabase.from('bus_checkins').delete().eq('id', id);
+};
+
 export const markTripArrived = async (logId: string) => {
   await supabase.from('logs').update({ status: TripStatus.ARRIVED, actual_arrival_time: new Date().toISOString() }).eq('id', logId);
 };
@@ -256,8 +260,9 @@ export const updateUserLocation = async (userId: string, locationId: string) => 
   await supabase.from('users').update({ current_location_id: locationId }).eq('id', userId);
 };
 
-export const updateUserAssignedWorksite = async (userId: string, worksiteId: string) => {
-  await supabase.from('users').update({ assigned_worksite_id: worksiteId }).eq('id', userId);
+export const updateUserAssignedWorksite = async (userId: string, worksiteIds: string[]) => {
+  // Update the new array column. 
+  await supabase.from('users').update({ assigned_worksite_ids: worksiteIds }).eq('id', userId);
 };
 
 export const toggleLocation = async (locationId: string) => {

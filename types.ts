@@ -26,7 +26,7 @@ export interface User {
   permissions: UserPermissions;
   joinedAt: string;
   currentLocationId?: string; // Track where the agent is currently physically stationed (e.g. Hotel)
-  assignedWorksiteId?: string; // Track the target worksite (e.g. Hospital)
+  assignedWorksiteIds?: string[]; // Track the target worksites (e.g. Hospital). Array for multi-select.
 }
 
 export enum LocationType {

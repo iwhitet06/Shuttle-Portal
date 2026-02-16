@@ -17,6 +17,25 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [newChatSearch, setNewChatSearch] = useState('');
 
+  // Local State for Dropdowns (Optimistic UI)
+  const [localWorksiteIds, setLocalWorksiteIds] = useState<string[]>(currentUser.assignedWorksiteIds || []);
+  const [hasLoadedWorksites, setHasLoadedWorksites] = useState(false);
+
+  // Sync with backend changes but prevent overwriting user interactions
+  useEffect(() => {
+    const serverIds = currentUser.assignedWorksiteIds || [];
+    
+    // Only sync if we haven't loaded yet OR if server has data and we don't
+    if (!hasLoadedWorksites) {
+        if (serverIds.length > 0) {
+            setLocalWorksiteIds(serverIds);
+            setHasLoadedWorksites(true);
+        } else if (localWorksiteIds.length === 0) {
+            // Both empty, assume loaded if needed
+        }
+    }
+  }, [currentUser.assignedWorksiteIds, hasLoadedWorksites]);
+
   // Update selected user if the prop changes (e.g. navigation from search)
   useEffect(() => {
     if (initialSelectedUserId) {
@@ -32,9 +51,18 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
       refreshData();
   };
 
-  const handleWorksiteChange = async (val: string) => {
-    await updateUserAssignedWorksite(currentUser.id, val);
-    refreshData();
+  const handleWorksiteChange = async (val: any) => {
+    let newIds: string[] = [];
+    if (Array.isArray(val)) {
+        newIds = val;
+    } else {
+        newIds = [val];
+    }
+    
+    setLocalWorksiteIds(newIds); // Optimistic Update
+    setHasLoadedWorksites(true); // Mark as modified by user
+    await updateUserAssignedWorksite(currentUser.id, newIds);
+    // Removed refreshData() to allow background polling to sync naturally
   };
 
   // Get active worksites for the dropdown
@@ -129,23 +157,26 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
         return fullName.includes(newChatSearch.toLowerCase());
     });
 
+  const isAdmin = currentUser.role === UserRole.ADMIN;
+
   return (
     <div className="h-[calc(100vh-100px)] max-w-6xl mx-auto flex flex-col md:flex-row bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
       
       {/* Sidebar List */}
-      <div className={`md:w-1/3 border-r border-slate-200 flex flex-col ${selectedUserId ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`md:w-1/3 border-r border-slate-200 flex flex-col relative ${selectedUserId ? 'hidden md:flex' : 'flex'}`}>
         
         {/* Worksite Selector Box */}
         <div className="p-4 bg-slate-100 border-b border-slate-200">
             <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                <Briefcase size={12} /> My Assigned Worksite
+                <Briefcase size={12} /> My Assigned Worksite{isAdmin ? 's' : ''}
             </label>
             <SearchableDropdown 
                 options={activeWorksites} 
-                value={currentUser.assignedWorksiteId || ''} 
+                value={isAdmin ? localWorksiteIds : (localWorksiteIds[0] || '')} 
                 onChange={handleWorksiteChange} 
-                placeholder="Select your worksite..."
+                placeholder={isAdmin ? "Select worksites..." : "Select your worksite..."}
                 compact={true}
+                multiple={isAdmin}
             />
         </div>
 
@@ -160,7 +191,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto relative">
+        <div className="flex-1 overflow-y-auto">
           {displayUsers.length > 0 ? (
              displayUsers.map(item => renderUserItem(item))
           ) : (
@@ -168,43 +199,51 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                   No active chats. Start a new one!
               </div>
           )}
+        </div>
 
-          {/* New Chat Modal/Overlay */}
-          {isNewChatOpen && (
-            <div className="absolute inset-0 bg-white z-20 flex flex-col animate-fadeIn">
-                <div className="p-3 border-b border-slate-200 flex items-center gap-2">
+        {/* New Chat Modal/Overlay (Moved to root of Sidebar for better positioning) */}
+        {isNewChatOpen && (
+        <div className="absolute inset-0 bg-white z-50 flex flex-col animate-fadeIn">
+            <div className="p-3 border-b border-slate-200 flex items-center gap-2 bg-slate-50">
+                <div className="relative flex-1">
                     <input 
                         type="text" 
                         autoFocus
                         placeholder="Search users..."
-                        className="flex-1 bg-slate-100 border-none rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                        className="w-full bg-white border border-slate-200 rounded-lg pl-3 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
                         value={newChatSearch}
                         onChange={e => setNewChatSearch(e.target.value)}
                     />
-                    <button onClick={() => setIsNewChatOpen(false)} className="text-slate-400 hover:text-slate-600">
-                        <X size={20} />
-                    </button>
                 </div>
-                <div className="flex-1 overflow-y-auto">
-                    {potentialNewChatUsers.map(u => (
-                        <button
-                            key={u.id}
-                            onClick={() => handleSelectUser(u.id)}
-                            className="w-full text-left p-3 hover:bg-blue-50 border-b border-slate-50 flex items-center gap-3"
-                        >
-                            <div className="bg-slate-200 p-2 rounded-full text-slate-500">
-                                <UserIcon size={16} />
-                            </div>
-                            <div>
-                                <div className="font-medium text-slate-800 text-sm">{u.firstName} {u.lastName}</div>
-                                <div className="text-xs text-slate-500">{u.role}</div>
-                            </div>
-                        </button>
-                    ))}
-                </div>
+                <button onClick={() => setIsNewChatOpen(false)} className="text-slate-400 hover:text-slate-600 p-2">
+                    <X size={20} />
+                </button>
             </div>
-          )}
+            <div className="flex-1 overflow-y-auto">
+                {potentialNewChatUsers.length > 0 ? (
+                    potentialNewChatUsers.map(u => (
+                    <button
+                        key={u.id}
+                        onClick={() => handleSelectUser(u.id)}
+                        className="w-full text-left p-3 hover:bg-blue-50 border-b border-slate-50 flex items-center gap-3"
+                    >
+                        <div className="bg-slate-200 p-2 rounded-full text-slate-500">
+                            <UserIcon size={16} />
+                        </div>
+                        <div>
+                            <div className="font-medium text-slate-800 text-sm">{u.firstName} {u.lastName}</div>
+                            <div className="text-xs text-slate-500">{u.role}</div>
+                        </div>
+                    </button>
+                    ))
+                ) : (
+                    <div className="p-8 text-center text-slate-400 text-sm">
+                        No users found.
+                    </div>
+                )}
+            </div>
         </div>
+        )}
       </div>
 
       {/* Chat Area */}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { AppData, User, UserRole, LocationType } from '../types';
-import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/supabaseService';
-import { Send, User as UserIcon, Briefcase, Plus, X } from 'lucide-react';
+import { AppData, User, UserRole, LocationType, Group } from '../types';
+import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite, createGroup } from '../services/supabaseService';
+import { Send, User as UserIcon, Briefcase, Plus, X, Users as UsersIcon, MessageSquare } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -12,10 +12,17 @@ interface MessagingViewProps {
 }
 
 export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser, refreshData, initialSelectedUserId }) => {
-  const [selectedUserId, setSelectedUserId] = useState<string | null>(initialSelectedUserId || null);
+  // Can be a UserId OR a GroupId
+  const [selectedChatId, setSelectedChatId] = useState<string | null>(initialSelectedUserId || null);
+  
   const [msgContent, setMsgContent] = useState('');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [newChatSearch, setNewChatSearch] = useState('');
+
+  // Create Group State
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupMemberIds, setNewGroupMemberIds] = useState<string[]>([]);
 
   // Local State for Dropdowns (Optimistic UI)
   const [localWorksiteIds, setLocalWorksiteIds] = useState<string[]>(currentUser.assignedWorksiteIds || []);
@@ -39,15 +46,21 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
   // Update selected user if the prop changes (e.g. navigation from search)
   useEffect(() => {
     if (initialSelectedUserId) {
-      handleSelectUser(initialSelectedUserId);
+      handleSelectChat(initialSelectedUserId);
     }
   }, [initialSelectedUserId]);
 
-  const handleSelectUser = async (id: string) => {
-      setSelectedUserId(id);
+  const handleSelectChat = async (id: string) => {
+      setSelectedChatId(id);
       setIsNewChatOpen(false);
       setNewChatSearch('');
-      await markMessagesAsRead(id, currentUser.id); // Mark messages from sender to me as read
+      
+      // If it's a user chat, mark as read
+      // For groups, we assume read when opened for now (simple logic)
+      const isGroup = data.groups?.some(g => g.id === id);
+      if (!isGroup) {
+          await markMessagesAsRead(id, currentUser.id); 
+      }
       refreshData();
   };
 
@@ -59,10 +72,9 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
         newIds = [val];
     }
     
-    setLocalWorksiteIds(newIds); // Optimistic Update
-    setHasLoadedWorksites(true); // Mark as modified by user
+    setLocalWorksiteIds(newIds); 
+    setHasLoadedWorksites(true); 
     await updateUserAssignedWorksite(currentUser.id, newIds);
-    // Removed refreshData() to allow background polling to sync naturally
   };
 
   // Get active worksites for the dropdown
@@ -74,88 +86,136 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
      return allowedIds.includes(l.id);
   });
 
-  // Calculate active conversations (Filter)
+  // Groups Logic
+  const myGroups = (data.groups || []).filter(g => g.memberIds.includes(currentUser.id));
+
+  // Determine active conversation User IDs (excluding groups)
   const existingConversationUserIds = new Set<string>();
   data.messages.forEach(m => {
-      if (m.fromUserId === currentUser.id) existingConversationUserIds.add(m.toUserId);
-      if (m.toUserId === currentUser.id) existingConversationUserIds.add(m.fromUserId);
+      if (!m.groupId) {
+          if (m.fromUserId === currentUser.id) existingConversationUserIds.add(m.toUserId!);
+          if (m.toUserId === currentUser.id) existingConversationUserIds.add(m.fromUserId);
+      }
   });
 
   // Base list of users to display in sidebar
+  const myWorksiteIds = currentUser.assignedWorksiteIds || [];
   const allUsers = data.users
     .filter(u => u.id !== currentUser.id && u.status === 'ACTIVE')
     .map(u => {
+        // Direct messages only
         const msgs = data.messages.filter(m => 
-            (m.fromUserId === currentUser.id && m.toUserId === u.id) ||
-            (m.fromUserId === u.id && m.toUserId === currentUser.id)
-        ).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()); // Newest first
+            !m.groupId && (
+                (m.fromUserId === currentUser.id && m.toUserId === u.id) ||
+                (m.fromUserId === u.id && m.toUserId === currentUser.id)
+            )
+        ).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
         const lastMsg = msgs[0];
         const unreadCount = msgs.filter(m => m.fromUserId === u.id && m.toUserId === currentUser.id && !m.isRead).length;
-
-        // Determine if user should show in sidebar:
-        // 1. Has existing conversation
-        const shouldShow = existingConversationUserIds.has(u.id);
+        const sharesWorksite = u.assignedWorksiteIds?.some(id => myWorksiteIds.includes(id));
+        const shouldShow = existingConversationUserIds.has(u.id) || sharesWorksite;
 
         return {
-            user: u,
+            type: 'USER',
+            id: u.id,
+            name: `${u.firstName} ${u.lastName}`,
+            role: u.role,
             lastMsgTime: lastMsg ? new Date(lastMsg.timestamp).getTime() : 0,
             unreadCount,
-            shouldShow
+            shouldShow,
+            data: u
         };
     });
 
-  // Filter for display
-  const displayUsers = allUsers.filter(u => u.shouldShow).sort((a, b) => b.lastMsgTime - a.lastMsgTime);
+  // Map Groups to display items
+  const groupItems = myGroups.map(g => {
+      const msgs = data.messages
+        .filter(m => m.groupId === g.id)
+        .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      
+      return {
+          type: 'GROUP',
+          id: g.id,
+          name: g.name,
+          role: 'Group',
+          lastMsgTime: msgs[0] ? new Date(msgs[0].timestamp).getTime() : 0,
+          unreadCount: 0, // Group unread not implemented in basic mock
+          shouldShow: true,
+          data: g
+      };
+  });
+
+  // Combine and Sort
+  const displayItems = [...allUsers.filter(u => u.shouldShow), ...groupItems]
+      .sort((a, b) => b.lastMsgTime - a.lastMsgTime);
+
+  // Identify Current Chat
+  const isSelectedGroup = myGroups.some(g => g.id === selectedChatId);
+  const selectedUser = !isSelectedGroup ? data.users.find(u => u.id === selectedChatId) : null;
+  const selectedGroup = isSelectedGroup ? myGroups.find(g => g.id === selectedChatId) : null;
 
   // Filter messages for selected conversation
-  const conversation = selectedUserId 
-    ? data.messages.filter(m => 
-        (m.fromUserId === currentUser.id && m.toUserId === selectedUserId) ||
-        (m.fromUserId === selectedUserId && m.toUserId === currentUser.id)
-      ).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+  const conversation = selectedChatId 
+    ? data.messages.filter(m => {
+        if (isSelectedGroup) {
+            return m.groupId === selectedChatId;
+        } else {
+            return !m.groupId && (
+                (m.fromUserId === currentUser.id && m.toUserId === selectedChatId) ||
+                (m.fromUserId === selectedChatId && m.toUserId === currentUser.id)
+            );
+        }
+    }).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
     : [];
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedUserId || !msgContent.trim()) return;
-    await sendMessage(currentUser.id, selectedUserId, msgContent);
+    if (!selectedChatId || !msgContent.trim()) return;
+    
+    // Check if group or user
+    const isGroup = !!selectedGroup;
+    await sendMessage(currentUser.id, selectedChatId, msgContent, isGroup);
+    
     setMsgContent('');
     refreshData();
   };
 
-  const renderUserItem = ({ user, unreadCount }: typeof allUsers[0]) => (
+  const handleCreateGroup = async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!newGroupName || newGroupMemberIds.length === 0) return;
+      
+      const newGroup = await createGroup(newGroupName, currentUser.id, newGroupMemberIds);
+      setIsCreateGroupOpen(false);
+      setNewGroupName('');
+      setNewGroupMemberIds([]);
+      handleSelectChat(newGroup.id);
+  };
+
+  const renderSidebarItem = (item: typeof displayItems[0]) => (
     <button
-      key={user.id}
-      onClick={() => handleSelectUser(user.id)}
-      className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition flex items-center justify-between ${selectedUserId === user.id ? 'bg-blue-50 border-blue-100' : ''}`}
+      key={item.id}
+      onClick={() => handleSelectChat(item.id)}
+      className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition flex items-center justify-between ${selectedChatId === item.id ? 'bg-blue-50 border-blue-100' : ''}`}
     >
       <div className="flex items-center space-x-3">
-          <div className="p-2 rounded-full relative bg-slate-200 text-slate-500">
-            <UserIcon size={20} />
+          <div className={`p-2 rounded-full relative ${item.type === 'GROUP' ? 'bg-purple-100 text-purple-600' : 'bg-slate-200 text-slate-500'}`}>
+            {item.type === 'GROUP' ? <UsersIcon size={20} /> : <UserIcon size={20} />}
           </div>
           <div>
             <div className="font-medium text-slate-800 flex items-center gap-1">
-                {user.firstName} {user.lastName}
+                {item.name}
             </div>
-            <div className="text-xs text-slate-500 uppercase">{user.role}</div>
+            <div className="text-xs text-slate-500 uppercase">{item.role}</div>
           </div>
       </div>
-      {unreadCount > 0 && (
+      {item.unreadCount > 0 && (
           <div className="bg-blue-600 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full shadow-sm">
-              {unreadCount}
+              {item.unreadCount}
           </div>
       )}
     </button>
   );
-
-  // New Chat Selection List
-  const potentialNewChatUsers = data.users
-    .filter(u => u.id !== currentUser.id && u.status === 'ACTIVE')
-    .filter(u => {
-        const fullName = `${u.firstName} ${u.lastName}`.toLowerCase();
-        return fullName.includes(newChatSearch.toLowerCase());
-    });
 
   const isAdmin = currentUser.role === UserRole.ADMIN;
 
@@ -163,7 +223,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
     <div className="h-[calc(100vh-100px)] max-w-6xl mx-auto flex flex-col md:flex-row bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden">
       
       {/* Sidebar List */}
-      <div className={`md:w-1/3 border-r border-slate-200 flex flex-col relative ${selectedUserId ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`md:w-1/3 border-r border-slate-200 flex flex-col relative ${selectedChatId ? 'hidden md:flex' : 'flex'}`}>
         
         {/* Worksite Selector Box */}
         <div className="p-4 bg-slate-100 border-b border-slate-200">
@@ -182,26 +242,37 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
 
         <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
           <h3 className="font-bold text-slate-700 text-sm">Chats</h3>
-          <button 
-            onClick={() => setIsNewChatOpen(true)}
-            className="p-1 text-blue-600 hover:bg-blue-100 rounded-full transition"
-            title="New Chat"
-          >
-            <Plus size={20} />
-          </button>
+          <div className="flex gap-1">
+            {isAdmin && (
+                <button 
+                    onClick={() => setIsCreateGroupOpen(true)}
+                    className="p-1 text-purple-600 hover:bg-purple-100 rounded-full transition"
+                    title="Create Group"
+                >
+                    <UsersIcon size={20} />
+                </button>
+            )}
+            <button 
+                onClick={() => setIsNewChatOpen(true)}
+                className="p-1 text-blue-600 hover:bg-blue-100 rounded-full transition"
+                title="New Chat"
+            >
+                <Plus size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto">
-          {displayUsers.length > 0 ? (
-             displayUsers.map(item => renderUserItem(item))
+          {displayItems.length > 0 ? (
+             displayItems.map(item => renderSidebarItem(item))
           ) : (
               <div className="p-8 text-center text-slate-400 text-sm">
-                  No active chats. Start a new one!
+                  No active chats.
               </div>
           )}
         </div>
 
-        {/* New Chat Modal/Overlay (Moved to root of Sidebar for better positioning) */}
+        {/* New Chat Modal/Overlay */}
         {isNewChatOpen && (
         <div className="absolute inset-0 bg-white z-50 flex flex-col animate-fadeIn">
             <div className="p-3 border-b border-slate-200 flex items-center gap-2 bg-slate-50">
@@ -220,11 +291,13 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                 </button>
             </div>
             <div className="flex-1 overflow-y-auto">
-                {potentialNewChatUsers.length > 0 ? (
-                    potentialNewChatUsers.map(u => (
+                {data.users
+                    .filter(u => u.id !== currentUser.id && u.status === 'ACTIVE')
+                    .filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(newChatSearch.toLowerCase()))
+                    .map(u => (
                     <button
                         key={u.id}
-                        onClick={() => handleSelectUser(u.id)}
+                        onClick={() => handleSelectChat(u.id)}
                         className="w-full text-left p-3 hover:bg-blue-50 border-b border-slate-50 flex items-center gap-3"
                     >
                         <div className="bg-slate-200 p-2 rounded-full text-slate-500">
@@ -235,43 +308,94 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                             <div className="text-xs text-slate-500">{u.role}</div>
                         </div>
                     </button>
-                    ))
-                ) : (
-                    <div className="p-8 text-center text-slate-400 text-sm">
-                        No users found.
-                    </div>
-                )}
+                ))}
             </div>
         </div>
+        )}
+
+        {/* Create Group Modal */}
+        {isCreateGroupOpen && (
+            <div className="absolute inset-0 bg-white z-50 flex flex-col animate-fadeIn">
+                <div className="p-4 border-b border-slate-200 bg-purple-50 flex justify-between items-center">
+                    <h3 className="font-bold text-purple-900 flex items-center gap-2">
+                        <UsersIcon size={18} /> New Group Chat
+                    </h3>
+                    <button onClick={() => setIsCreateGroupOpen(false)} className="text-slate-400 hover:text-slate-600">
+                        <X size={20} />
+                    </button>
+                </div>
+                <form onSubmit={handleCreateGroup} className="flex-1 p-4 flex flex-col gap-4">
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Group Name</label>
+                        <input 
+                            type="text" 
+                            className="w-full border border-slate-300 rounded-lg p-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none"
+                            placeholder="e.g. Dispatch Team"
+                            value={newGroupName}
+                            onChange={e => setNewGroupName(e.target.value)}
+                            required
+                        />
+                    </div>
+                    <div className="flex-1 flex flex-col min-h-0">
+                        <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Add Members</label>
+                        <div className="flex-1 border border-slate-200 rounded-lg overflow-y-auto">
+                            {data.users.filter(u => u.id !== currentUser.id && u.status === 'ACTIVE').map(u => (
+                                <label key={u.id} className="flex items-center gap-3 p-3 hover:bg-slate-50 border-b border-slate-50 cursor-pointer">
+                                    <input 
+                                        type="checkbox" 
+                                        className="w-4 h-4 text-purple-600 rounded"
+                                        checked={newGroupMemberIds.includes(u.id)}
+                                        onChange={e => {
+                                            if (e.target.checked) setNewGroupMemberIds([...newGroupMemberIds, u.id]);
+                                            else setNewGroupMemberIds(newGroupMemberIds.filter(id => id !== u.id));
+                                        }}
+                                    />
+                                    <div>
+                                        <div className="text-sm font-medium text-slate-800">{u.firstName} {u.lastName}</div>
+                                        <div className="text-xs text-slate-500">{u.role}</div>
+                                    </div>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    <button 
+                        type="submit" 
+                        className="w-full bg-purple-600 text-white font-bold py-2.5 rounded-lg shadow hover:bg-purple-700 disabled:opacity-50"
+                        disabled={!newGroupName || newGroupMemberIds.length === 0}
+                    >
+                        Create Group
+                    </button>
+                </form>
+            </div>
         )}
       </div>
 
       {/* Chat Area */}
-      <div className={`flex-1 flex flex-col ${!selectedUserId ? 'hidden md:flex' : 'flex'}`}>
-        {!selectedUserId ? (
+      <div className={`flex-1 flex flex-col ${!selectedChatId ? 'hidden md:flex' : 'flex'}`}>
+        {!selectedChatId ? (
           <div className="flex-1 flex items-center justify-center text-slate-400 bg-slate-50/50">
             <div className="text-center">
-                <Send size={48} className="mx-auto mb-4 opacity-20" />
-                <p>Select a user to start messaging</p>
+                <MessageSquare size={48} className="mx-auto mb-4 opacity-20" />
+                <p>Select a chat to start messaging</p>
             </div>
           </div>
         ) : (
           <>
             <div className="p-4 border-b border-slate-100 flex items-center justify-between bg-white shadow-sm z-10">
                <div className="flex items-center gap-3">
-                   <div className="bg-slate-100 p-2 rounded-full">
-                       <UserIcon size={20} className="text-slate-600" />
+                   <div className={`p-2 rounded-full ${isSelectedGroup ? 'bg-purple-100 text-purple-600' : 'bg-slate-100 text-slate-600'}`}>
+                       {isSelectedGroup ? <UsersIcon size={20} /> : <UserIcon size={20} />}
                    </div>
                    <div>
                         <div className="font-bold text-slate-800">
-                            {allUsers.find(item => item.user.id === selectedUserId)?.user.firstName} {allUsers.find(item => item.user.id === selectedUserId)?.user.lastName}
+                            {isSelectedGroup ? selectedGroup?.name : `${selectedUser?.firstName} ${selectedUser?.lastName}`}
                         </div>
                         <div className="text-xs text-slate-500">
-                             {allUsers.find(item => item.user.id === selectedUserId)?.user.role}
+                             {isSelectedGroup ? `${selectedGroup?.memberIds.length} Members` : selectedUser?.role}
                         </div>
                    </div>
                </div>
-               <button onClick={() => setSelectedUserId(null)} className="md:hidden text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full">
+               <button onClick={() => setSelectedChatId(null)} className="md:hidden text-sm text-blue-600 font-medium bg-blue-50 px-3 py-1 rounded-full">
                  Back
                </button>
             </div>
@@ -280,8 +404,13 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                {conversation.length === 0 && <p className="text-center text-slate-400 text-sm mt-4">No messages yet.</p>}
                {conversation.map(msg => {
                  const isMe = msg.fromUserId === currentUser.id;
+                 const sender = isSelectedGroup && !isMe ? data.users.find(u => u.id === msg.fromUserId) : null;
+                 
                  return (
-                   <div key={msg.id} className={`flex ${isMe ? 'justify-end' : 'justify-start'}`}>
+                   <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
+                     {sender && (
+                         <span className="text-[10px] text-slate-400 mb-1 ml-1">{sender.firstName} {sender.lastName}</span>
+                     )}
                      <div className={`max-w-[75%] p-3 rounded-2xl text-sm shadow-sm ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white border border-slate-200 text-slate-800 rounded-bl-none'}`}>
                        {msg.content}
                        <div className={`text-[10px] mt-1 text-right ${isMe ? 'text-blue-200' : 'text-slate-400'}`}>
@@ -298,7 +427,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                 type="text"
                 value={msgContent}
                 onChange={e => setMsgContent(e.target.value)}
-                placeholder="Type a message..."
+                placeholder={isSelectedGroup ? `Message ${selectedGroup?.name}...` : "Type a message..."}
                 className="flex-1 px-4 py-2 border border-slate-300 rounded-full focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
               />
               <button 

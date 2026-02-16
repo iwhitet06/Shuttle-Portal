@@ -2,7 +2,143 @@ import React, { useState, useEffect } from 'react';
 import { AppData, User, RouteType, LocationType, LogEntry, TripStatus, UserRole, BusCheckIn } from '../types';
 import { createLog, markTripArrived, createBusCheckIn, updateUserLocation, updateUserAssignedWorksite, updateBusCheckIn } from '../services/supabaseService';
 import { SearchableDropdown } from './SearchableDropdown';
-import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X, Loader2, Edit2, Save } from 'lucide-react';
+import { ArrowRightLeft, Bus, Clock, Users, Building, MapPin, CheckCircle2, AlertCircle, History, User as UserIcon, ArrowDownCircle, FileText, ChevronDown, ChevronUp, Briefcase, Settings2, X, Loader2, Edit2, Save, Eye } from 'lucide-react';
+
+// Drive Time Lookup Table (Hotel Name | Worksite Name -> Duration H:MM)
+const ROUTE_DURATIONS: Record<string, string> = {
+  "Courtyard by Marriott Los Angeles Hacienda Heights/Orange County|Downey MC": "0:50",
+  "SpringHill Suites by Marriott Valencia|Panorama City MC": "0:50",
+  "Hampton Inn Los Angeles/Santa Clarita|Panorama City MC": "0:45",
+  "Courtyard by Marriott Los Angeles Monterey Park|Downey MC": "0:35",
+  "W Hollywood|Panorama City MC": "0:25",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|LAMC Mental Health Center": "0:25",
+  "Courtyard by Marriott Los Angeles Sherman Oaks|Panorama City MC": "0:24",
+  "Newport Beach Marriott Bayview|Irvine MC": "0:20",
+  "Sheraton Universal Hotel|Panorama City MC": "0:20",
+  "Hampton Inn by Hilton North Hollywood|Panorama City MC": "0:20",
+  "Sheraton Gateway Los Angeles Hotel|Carson Medical Office": "0:24",
+  "Courtyard by Marriott Ventura Simi Valley|Porter Ranch MOB Family Medicine": "0:22",
+  "DoubleTree by Hilton Hotel Ontario Airport|Ontario Medical Center MOB A & D": "0:20",
+  "Courtyard by Marriott Bakersfield|Stockdale Urgent Care": "0:18",
+  "Courtyard by Marriott Long Beach Airport|Irvine MC": "0:50",
+  "Los Angeles Airport Marriott|West LA MC": "0:45",
+  "Marina Del Rey Marriott|West LA MC": "0:35",
+  "Hilton Garden Inn Dana Point Doheny Beach|Irvine MC": "0:26",
+  "Hotel Indigo Los Angeles Downtown, an IHG Hotel|West LA MC": "0:20",
+  "The Westin LAX|West LA MC": "0:20",
+  "Courtyard by Marriott Thousand Oaks Agoura Hills|Woodland Hills MC": "0:20",
+  "Sheraton Agoura Hills Hotel|Woodland Hills MC": "0:18",
+  "Irvine Marriott|Irvine MC": "0:16",
+  "AC Hotel Beverly Hills|West LA MC": "0:14",
+  "Sheraton Gateway Los Angeles Hotel|Normandie North Medical Offices": "0:35",
+  "Hilton Garden Inn Dana Point Doheny Beach|MVJ Medical Office": "0:22",
+  "San Diego Marriott Mission Valley|San Diego Medical Center": "0:16",
+  "Courtyard by Marriott Bakersfield|Chester I MOB": "0:12",
+  "Sonesta ES Suites Carmel Mountain San Diego|ZION MEDICAL CENTER": "0:30",
+  "Holiday Inn Carlsbad - San Diego, an IHG Hotel|SAN MARCOS MEDICAL CENTER": "0:24",
+  "Staybridge Suites Carlsbad - San Diego, an IHG Hotel|SAN MARCOS MEDICAL CENTER": "0:24",
+  "Carte Hotel San Diego Downtown, Curio Collection by Hilton|Zion Medical Center": "0:22",
+  "Courtyard by Marriott San Diego Downtown Little Italy|Zion Medical Center": "0:22",
+  "Crowne Plaza San Diego - Mission Valley by IHG|Zion Medical Center": "0:20",
+  "SpringHill Suites by Marriott San Diego Escondido/Downtown|SAN MARCOS MEDICAL CENTER": "0:20",
+  "Hampton Inn San Diego/Mission Valley|Zion Medical Center": "0:18",
+  "TownePlace Suites by Marriott San Diego Carlsbad/Vista|SAN MARCOS MEDICAL CENTER": "0:18",
+  "San Diego Marriott Mission Valley|ZION MEDICAL CENTER": "0:16",
+  "The Viv Hotel, Anaheim, a Tribute Portfolio Hotel|HBM Medical Office": "0:35",
+  "The Westin South Coast Plaza, Costa Mesa|Downey MC - Orchard MOB": "0:35",
+  "Courtyard by Marriott Irvine John Wayne Airport/Orange County|HBM Medical Office": "0:18",
+  "Le Méridien Pasadena Arcadia|FPL Med Office": "0:16",
+  "Le Méridien Pasadena Arcadia|LAMC": "0:40",
+  "Homewood Suites by Hilton San Bernardino|Fontana Medical Center": "0:35",
+  "Hotel Indigo Los Angeles Downtown, an IHG Hotel|Los Angeles Medical Center": "0:30",
+  "Candlewood Suites Loma Linda - San Bernardino S by IHG|Fontana Medical Center": "0:30",
+  "Holiday Inn Express & Suites Loma Linda- San Bernardino S by IHG|Fontana Medical Center": "0:30",
+  "Four Points by Sheraton Ontario-Rancho Cucamonga|FMC MOB 1& 2, MOB 3": "0:28",
+  "InterContinental Los Angeles Downtown by IHG|Los Angeles Medical Center": "0:28",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|Los Angeles Medical Center": "0:28",
+  "DoubleTree by Hilton Hotel San Bernardino|Fontana Medical Center": "0:26",
+  "TownePlace Suites by Marriott San Bernardino Loma Linda|Fontana Medical Center": "0:26",
+  "Hotel Indigo Los Angeles Downtown, an IHG Hotel|LAMC": "0:24",
+  "Courtyard San Bernardino Loma Linda|Fontana Medical Center": "0:20",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|KP-4700 Sunset": "0:26",
+  "Courtyard by Marriott Thousand Oaks Ventura County|Market Street MOB": "0:26",
+  "Warner Center Marriott Woodland Hills|Woodland Hills MC": "0:06",
+  "Courtyard by Marriott Chino Hills|Riverside Medical Center MOB": "0:45",
+  "Courtyard by Marriott Chino Hills|Riverside MC": "0:45",
+  "Hampton Inn & Suites Moreno Valley|Riverside MC": "0:40",
+  "TownePlace Suites by Marriott Ontario Chino Hills|Riverside MC": "0:40",
+  "Fairfield by Marriott Inn & Suites San Bernardino|Riverside MC": "0:35",
+  "Residence Inn by Marriott San Bernardino|Riverside MC": "0:35",
+  "Courtyard by Marriott Los Angeles Hacienda Heights/Orange County|Baldwin Park MC": "0:30",
+  "Courtyard by Marriott Riverside UCR/Moreno Valley Area|Riverside MC": "0:28",
+  "Fairfield by Marriott Inn & Suites Riverside Corona/Norco|Riverside MC": "0:25",
+  "SpringHill Suites by Marriott Corona Riverside|Riverside MC": "0:18",
+  "DoubleTree by Hilton Hotel San Diego - Mission Valley|OTM Medical Office": "0:30",
+  "Courtyard by Marriott San Diego Downtown|OTM Medical Office": "0:28",
+  "SpringHill Suites by Marriott Los Angeles Downey|Downey MC- Garden MOB": "0:12",
+  "Sheraton Gateway Los Angeles Hotel|South Bay MC": "0:30",
+  "Courtyard by Marriott San Diego Carlsbad|San Marcos Medical Center": "0:28",
+  "DoubleTree by Hilton Hotel Ontario Airport|Ontario Medical Center": "0:22",
+  "Fairfield by Marriott Inn & Suites San Diego Carlsbad|San Marcos Medical Center": "0:28",
+  "Residence Inn by Marriott Ontario Rancho Cucamonga|Ontario Medical Center": "0:28",
+  "Residence Inn by Marriott Los Angeles Torrance/Redondo Beach|South Bay MC": "0:24",
+  "Courtyard by Marriott Bakersfield|Stockdale": "0:15",
+  "Sheraton Gateway Los Angeles Hotel|Coastline Medical Office Building": "0:30",
+  "Delta Hotels Anaheim Garden Grove|Kraemer Medical Office 2": "0:30",
+  "SpringHill Suites by Marriott Los Angeles Downey|Downey MC - Orchard MOB": "0:09",
+  "SLS Hotel, a Luxury Collection Hotel, Beverly Hills|Baldwin Hills Crenshaw Med Office": "0:30",
+  "SLS Hotel, a Luxury Collection Hotel, Beverly Hills|Baldwin Park MC": "0:45",
+  "Delta Hotels Anaheim Garden Grove|Anaheim MC": "0:30",
+  "Hilton Anaheim|Anaheim MC": "0:28",
+  "Anaheim Suites|Anaheim MC": "0:26",
+  "JW Marriott, Anaheim Resort|Anaheim MC": "0:26",
+  "Residence Inn by Marriott Pasadena Arcadia|Baldwin Park MC": "0:24",
+  "DoubleTree by Hilton Hotel Los Angeles - Rosemead|Baldwin Park MC": "0:20",
+  "Fairfield Inn Anaheim Hills Orange County|Anaheim MC": "0:18",
+  "Sheraton Los Angeles San Gabriel|Baldwin Park MC": "0:14",
+  "Courtyard by Marriott Los Angeles Baldwin Park|Baldwin Park MC": "0:14",
+  "Courtyard by Marriott Los Angeles Monterey Park|Downey MC": "0:40",
+  "The Westin LAX|West LA MC": "0:40",
+  "Le Méridien Pasadena Arcadia|Center of Healthy Living": "0:28",
+  "The Westin South Coast Plaza, Costa Mesa|Pharmacy Central Order": "0:45",
+  "Fullerton Marriott at California State University|Ontario Medical Center": "0:35",
+  "Residence Inn by Marriott Santa Clarita Valencia|Panorama City-Main Campus (MO2, MO3, MO4, MO5, MO6)": "0:35",
+  "TownePlace Suites by Marriott Ontario Airport|Ontario Medical Center": "0:28",
+  "Home2 Suites by Hilton San Bernardino|VMC Clinical": "0:26",
+  "Courtyard San Bernardino Loma Linda|VMC Clinical": "0:26",
+  "Residence Inn by Marriott San Bernardino|VMC Clinical": "0:24",
+  "DoubleTree by Hilton Los Angeles – Norwalk|Pharmacy Central Order": "0:24",
+  "Delta Hotels Ontario Airport|Ontario Medical Center": "0:22",
+  "Holiday Inn la Mirada – Buena Park by IHG|Bellflower MOB": "0:26",
+  "SpringHill Suites by Marriott San Diego Escondido/Downtown|San Marcos MOB": "0:20",
+  "DoubleTree by Hilton Hotel San Diego - Mission Valley|Vandever MOB": "0:16",
+  "Residence Inn by Marriott Palmdale Lancaster|LAN Mob": "0:14",
+  "The Westin South Coast Plaza, Costa Mesa|Pharmacy Mail Order Pharm and Tech": "0:45",
+  "Sonesta ES Suites San Diego - Sorrento Mesa|San Diego Medical Center": "0:26",
+  "DoubleTree by Hilton Hotel San Diego - Mission Valley|San Diego Medical Center": "0:16",
+  "Courtyard by Marriott Costa Mesa South Coast Metro|EMO Medical Office": "0:35",
+  "The Westin South Coast Plaza, Costa Mesa|Downey MC": "0:50",
+  "DoubleTree by Hilton Whittier Los Angeles|Downey MC": "0:35",
+  "Residence Inn by Marriott Cypress Los Alamitos|Downey MC": "0:35",
+  "Holiday Inn la Mirada – Buena Park by IHG|Downey MC": "0:26",
+  "Sheraton Cerritos Hotel|Downey MC": "0:22",
+  "Sheraton Cerritos Hotel|Bellflower MOB": "0:20",
+  "Courtyard by Marriott San Diego Mission Valley/Hotel Circle|San Diego Medical Center": "0:16",
+  "Crowne Plaza San Diego - Mission Valley by IHG|San Diego Medical Center": "0:16",
+  "SpringHill Suites by Marriott Los Angeles Downey|Downey MC": "0:10",
+  "Courtyard by Marriott Costa Mesa South Coast Metro|GG Medical Office": "0:28",
+  "Courtyard by Marriott Victorville Hesperia|High Desert MOB": "0:18",
+  "Sonesta ES Suites San Diego - Rancho Bernardo|ZION MEDICAL CENTER": "0:35",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|KP-4900 Sunset": "0:35",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|Regional L&D Advice Nurse": "0:28",
+  "Hotel Indigo Los Angeles Downtown, an IHG Hotel|KP-4700 Sunset": "0:24",
+  "Courtyard by Marriott San Diego Downtown|ZION MEDICAL CENTER": "0:24",
+  "Courtyard by Marriott Los Angeles Pasadena/Old Town|KP-4950 Sunset": "0:25",
+  "DoubleTree by Hilton Hotel San Diego - Mission Valley|ZION MEDICAL CENTER": "0:16",
+  "Embassy Suites by Hilton Temecula Valley Wine Country|Murrieta Medical Office Building": "0:24",
+  "Residence Inn by Marriott Los Angeles Torrance/Redondo Beach|Normandie North Medical Offices": "0:24",
+  "Residence Inn by Marriott Santa Clarita Valencia|Santa Clarita MOB 2": "0:12"
+};
 
 interface AgentDashboardProps {
   data: AppData;
@@ -56,7 +192,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   const [company, setCompany] = useState('');
   const [busNo, setBusNo] = useState('');
   const [passengers, setPassengers] = useState('');
-  const [eta, setEta] = useState('');
+  // const [eta, setEta] = useState(''); // ETA hidden per request, now auto-calculated
   const [notes, setNotes] = useState('');
   
   // Check-in State
@@ -91,6 +227,13 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
     }
   }, [routeType, localLocationId, localWorksiteIds, activeTab]);
 
+  // Auto-fill Check-in location based on Station
+  useEffect(() => {
+      if (activeTab === 'CHECK_IN' && localLocationId && !checkInLocId) {
+          setCheckInLocId(localLocationId);
+      }
+  }, [activeTab, localLocationId]);
+
   // Helpers
   const getUserName = (userId: string) => {
     const u = data.users.find(u => u.id === userId);
@@ -106,16 +249,33 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
     setExpandedNotes(next);
   };
 
+  // Visibility Logic for Active Trips & History
+  const isLogVisible = (l: LogEntry) => {
+      // 1. Admins see everything
+      if (isAdmin) return true;
+      // 2. Owners see their own
+      if (l.userId === currentUser.id) return true;
+      
+      // 3. Agents see logs that involve their currently SELECTED worksites (localWorksiteIds)
+      //    A log involves a worksite if the departure OR arrival is in the selected set.
+      if (localWorksiteIds.length > 0) {
+          if (localWorksiteIds.includes(l.departLocationId) || localWorksiteIds.includes(l.arrivalLocationId)) {
+              return true;
+          }
+      }
+      return false;
+  };
+
   // Active trips logic - Filtered
   const activeTrips = data.logs
     .filter(l => l.status === TripStatus.IN_TRANSIT)
-    .filter(l => !isAgent || l.userId === currentUser.id) // Agents see own, Admins see all
+    .filter(isLogVisible)
     .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
   
   // History logic - Filtered
   const historyLogs = data.logs
     .filter(l => l.status === TripStatus.ARRIVED)
-    .filter(l => !isAgent || l.userId === currentUser.id) // Agents see own, Admins see all
+    .filter(isLogVisible)
     .sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
   // Check-ins History logic (Filtered to TODAY)
@@ -145,6 +305,29 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
     e.preventDefault();
     if (!departId || !arriveId || !driver || !company || !busNo || !passengers) return;
     
+    // Auto Calculate ETA
+    let autoEta = '';
+    const departLoc = data.locations.find(l => l.id === departId);
+    const arriveLoc = data.locations.find(l => l.id === arriveId);
+    
+    if (departLoc && arriveLoc) {
+        // Determine Hotel and Worksite for lookup (order agnostic in theory, but map is Hotel|Worksite)
+        const hotel = departLoc.type === LocationType.HOTEL ? departLoc : arriveLoc;
+        const worksite = departLoc.type === LocationType.WORKSITE ? departLoc : arriveLoc;
+        
+        if (hotel.type === LocationType.HOTEL && worksite.type === LocationType.WORKSITE) {
+             const key = `${hotel.name}|${worksite.name}`;
+             const duration = ROUTE_DURATIONS[key];
+             if (duration) {
+                 const [h, m] = duration.split(':').map(Number);
+                 const now = new Date();
+                 now.setMinutes(now.getMinutes() + (h * 60) + m);
+                 // Format as HH:mm (24h) for backend storage compatibility
+                 autoEta = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
+             }
+        }
+    }
+
     setIsSubmitting(true);
     await createLog({
       userId: currentUser.id,
@@ -155,7 +338,7 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
       companyName: company,
       busNumber: busNo,
       passengerCount: parseInt(passengers),
-      eta,
+      eta: autoEta,
       notes: notes.trim()
     });
 
@@ -187,11 +370,15 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
   const resetForm = () => {
     setBusNo('');
     setPassengers('');
-    setEta('');
+    // setEta('');
     setDriver('');
     setCompany('');
     setNotes('');
-    setCheckInLocId('');
+    // Do not reset checkInLocId if it was auto-filled from station
+    if (activeTab === 'DEPARTURE') {
+        // Only clear location selects if we want to force re-selection, 
+        // but keeping them sticky is usually better UX.
+    }
     setTimeout(() => setSuccessMsg(''), 3000);
   };
 
@@ -240,6 +427,18 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
 
   return (
     <div className="md:p-4 max-w-7xl mx-auto space-y-4 md:space-y-6">
+      
+      {/* CSS Animation for Breathing Glow */}
+      <style>{`
+        @keyframes breathing-border {
+          0% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); }
+          50% { box-shadow: 0 0 12px rgba(59, 130, 246, 0.4); border-color: rgba(59, 130, 246, 0.8); }
+          100% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.1); border-color: rgba(59, 130, 246, 0.3); }
+        }
+        .breathing-card {
+          animation: breathing-border 3s ease-in-out infinite;
+        }
+      `}</style>
 
       {/* --- DESKTOP HEADER --- */}
       <div className="hidden md:grid grid-cols-2 gap-4">
@@ -443,8 +642,8 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                         </div>
                       </div>
 
-                      {/* Stats Row */}
-                      <div className="grid grid-cols-3 gap-3">
+                      {/* Stats Row - ETA Removed */}
+                      <div className="grid grid-cols-2 gap-3">
                         <div>
                             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide ml-1 truncate">Bus #</label>
                             <input 
@@ -467,15 +666,6 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                             className="w-full px-3 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 text-center font-medium text-base shadow-sm"
                             placeholder="0"
                             required
-                            />
-                        </div>
-                        <div>
-                            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide ml-1 truncate">ETA</label>
-                            <input 
-                            type="time" 
-                            value={eta} 
-                            onChange={e => setEta(e.target.value)}
-                            className="w-full px-1 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 text-center text-sm shadow-sm"
                             />
                         </div>
                       </div>
@@ -608,8 +798,13 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                   </div>
                 )}
                 
-                {activeTrips.map(log => (
-                  <div key={log.id} className="bg-white border border-slate-200 p-3 md:p-4 rounded-xl shadow-sm relative overflow-hidden">
+                {activeTrips.map(log => {
+                  const isOwner = log.userId === currentUser.id;
+                  // Allow actions only for owner or admin
+                  const canAction = isAdmin || isOwner;
+
+                  return (
+                  <div key={log.id} className={`bg-white border border-slate-200 p-3 md:p-4 rounded-xl shadow-sm relative overflow-hidden transition-all duration-300 ${isOwner ? 'breathing-card bg-blue-50/40' : ''}`}>
                     {/* Status Stripe */}
                     <div className="absolute left-0 top-0 bottom-0 w-1 bg-blue-500"></div>
                     
@@ -638,6 +833,11 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                                 <span className="w-1 h-1 bg-slate-300 rounded-full"></span>
                                 <span className="font-semibold text-slate-700">{log.passengerCount} Pax</span>
                              </div>
+                             {!isOwner && (
+                                 <div className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                     <UserIcon size={10} /> Logged by: {getUserName(log.userId)}
+                                 </div>
+                             )}
                         </div>
 
                         {log.notes && (
@@ -656,15 +856,21 @@ export const AgentDashboard: React.FC<AgentDashboardProps> = ({ data, currentUse
                         </div>
                         )}
 
-                        <button 
-                            onClick={() => handleArrive(log.id)}
-                            className="w-full bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-sm font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
-                        >
-                            <CheckCircle2 size={16} /> Mark Arrived
-                        </button>
+                        {canAction ? (
+                            <button 
+                                onClick={() => handleArrive(log.id)}
+                                className="w-full bg-green-50 hover:bg-green-100 text-green-700 border border-green-200 text-sm font-bold py-2 rounded-lg transition flex items-center justify-center gap-2"
+                            >
+                                <CheckCircle2 size={16} /> Mark Arrived
+                            </button>
+                        ) : (
+                            <div className="w-full bg-slate-50 text-slate-400 border border-slate-200 text-xs font-medium py-2 rounded-lg flex items-center justify-center gap-2 cursor-not-allowed">
+                                <Eye size={14} /> Tracking Only
+                            </div>
+                        )}
                     </div>
                   </div>
-                ))}
+                )})}
               </div>
             </div>
           ) : (

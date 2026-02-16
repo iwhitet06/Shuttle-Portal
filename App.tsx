@@ -102,6 +102,11 @@ const App: React.FC = () => {
 
   const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
 
+  // Calculate unread messages count for current user
+  const unreadCount = currentUser 
+    ? data.messages.filter(m => m.toUserId === currentUser.id && !m.isRead).length 
+    : 0;
+
   const filteredLogs = searchQuery ? data.logs.filter(l => {
     const depName = getLocationName(l.departLocationId).toLowerCase();
     const arrName = getLocationName(l.arrivalLocationId).toLowerCase();
@@ -196,9 +201,12 @@ const App: React.FC = () => {
                </button>
                <button 
                  onClick={() => setView('MESSAGES')}
-                 className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition ${view === 'MESSAGES' ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
+                 className={`inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium transition relative ${view === 'MESSAGES' ? 'border-blue-500 text-gray-900' : 'border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700'}`}
                >
                  Messages
+                 {unreadCount > 0 && (
+                   <span className="absolute top-1 -right-2 block h-2.5 w-2.5 rounded-full ring-2 ring-white bg-blue-600"></span>
+                 )}
                </button>
                {canAccessAdminConsole && (
                  <button 
@@ -335,9 +343,14 @@ const App: React.FC = () => {
         </button>
         <button 
           onClick={() => setView('MESSAGES')}
-          className={`flex flex-col items-center space-y-1 ${view === 'MESSAGES' ? 'text-blue-600' : 'text-slate-400'}`}
+          className={`flex flex-col items-center space-y-1 relative ${view === 'MESSAGES' ? 'text-blue-600' : 'text-slate-400'}`}
         >
-          <MessageSquare size={24} />
+          <div className="relative">
+            <MessageSquare size={24} />
+            {unreadCount > 0 && (
+                <span className="absolute -top-1 -right-1 block h-2.5 w-2.5 rounded-full ring-2 ring-white bg-blue-600"></span>
+            )}
+          </div>
           <span className="text-[10px] font-medium">Messages</span>
         </button>
         {canAccessAdminConsole && (

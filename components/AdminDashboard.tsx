@@ -21,6 +21,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const [dateFilter, setDateFilter] = useState('');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
+  // Check-in Filtering
+  const [checkInSearch, setCheckInSearch] = useState('');
+  const [checkInLocationFilter, setCheckInLocationFilter] = useState('ALL');
+  const [checkInDateFilter, setCheckInDateFilter] = useState('');
+
   // User Filtering
   const [userSearch, setUserSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState<'ALL' | UserRole>('ALL');
@@ -190,7 +195,24 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const activeUsers = filteredUsers.filter(u => u.status !== UserStatus.REVOKED);
   const revokedUsers = filteredUsers.filter(u => u.status === UserStatus.REVOKED);
 
-  // Filter Check-ins for Today
+  // Filter Check-ins
+  const filteredCheckIns = (data.busCheckIns || []).filter(c => {
+      // Date Filter: If empty, show TODAY's checkins by default, unless cleared explicitly? 
+      // Requirement says "Add filters". Let's match log behavior: If date is empty, show ALL? 
+      // Or default to today? Let's default to NO date filter means ALL history, but maintain separate 'todaysCheckIns' var for stats if needed.
+      // Actually for fleet check-ins, recent is most important. 
+      // Let's mirror the Log Logic: if date filter provided, match it. If not, match everything.
+      
+      const searchContent = `${c.driverName} ${c.companyName} ${c.busNumber}`.toLowerCase();
+      return (!checkInSearch || searchContent.includes(checkInSearch.toLowerCase())) &&
+             (checkInLocationFilter === 'ALL' || c.locationId === checkInLocationFilter) &&
+             (!checkInDateFilter || new Date(c.timestamp).toLocaleDateString('en-CA') === checkInDateFilter);
+  }).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+  // Default to today if no filters active? No, show all if "Today" isn't selected.
+  // BUT, to keep the UI clean on initial load, maybe we should default the date picker to Today?
+  // Let's just default to showing everything sorted by newest.
+
   const todaysCheckIns = data.busCheckIns.filter(c => new Date(c.timestamp).toDateString() === new Date().toDateString());
 
   const exportCSV = () => {
@@ -268,10 +290,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                             ) : null}
                             
                             {/* ETA - Prominent */}
-                            <div className={`text-xs ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-800 border border-blue-100' : 'text-slate-500'} px-2 py-1 rounded inline-block font-bold`}>
-                                <span className="uppercase text-[10px] opacity-70 mr-1">ETA:</span>
-                                {formatTimeFromStr(log.eta)}
-                            </div>
+                            {log.eta && (
+                                <div className={`text-xs ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-800 border border-blue-100' : 'text-slate-500'} px-2 py-1 rounded inline-block font-bold`}>
+                                    <span className="uppercase text-[10px] opacity-70 mr-1">ETA:</span>
+                                    {formatTimeFromStr(log.eta)}
+                                </div>
+                            )}
                         </div>
                     </td>
                     <td className="p-4">
@@ -378,41 +402,62 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   );
 
   const renderCheckIns = () => (
-    <div className="bg-white rounded-xl shadow-sm border p-4">
-        <h3 className="font-bold text-orange-900 mb-4 flex justify-between items-center">
-            <span>Fleet Check-ins (Today)</span>
-            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full">{todaysCheckIns.length}</span>
-        </h3>
-        {todaysCheckIns.length === 0 ? (
-            <div className="text-center p-8 text-slate-400 text-sm">No check-ins logged today.</div>
-        ) : (
-            <table className="w-full text-sm text-left">
-                <thead className="bg-orange-50 font-bold text-orange-800">
-                    <tr>
-                        <th className="p-3">Time</th>
-                        <th className="p-3">Loc</th>
-                        <th className="p-3">Bus</th>
-                        <th className="p-3">Driver</th>
-                        <th className="p-3 text-right">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {todaysCheckIns.map(c => (
-                        <tr key={c.id} className="border-b">
-                            <td className="p-3">{formatTime(c.timestamp)}</td>
-                            <td className="p-3">{getLocationName(c.locationId)}</td>
-                            <td className="p-3">{c.companyName} #{c.busNumber}</td>
-                            <td className="p-3">{c.driverName}</td>
-                            <td className="p-3 text-right">
-                                <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded transition" title="Delete Check-in">
-                                    <Trash2 size={16} />
-                                </button>
-                            </td>
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col relative">
+        <div className="p-4 border-b border-slate-200 bg-orange-50/30 flex justify-between items-center rounded-t-xl">
+            <div>
+                <h3 className="font-bold text-orange-900 flex items-center gap-2">
+                    <ArrowDownCircle size={20} />
+                    Fleet Check-ins
+                </h3>
+            </div>
+            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full font-bold">{filteredCheckIns.length}</span>
+        </div>
+
+        {/* Filters for Check-ins */}
+        <div className="p-4 bg-slate-50 grid grid-cols-1 md:grid-cols-3 gap-3 border-b border-slate-200 relative z-20">
+            <input type="text" placeholder="Search check-ins..." value={checkInSearch} onChange={e => setCheckInSearch(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+            <SearchableDropdown options={[{id:'ALL', name:'All Locations'}, ...data.locations]} value={checkInLocationFilter} onChange={setCheckInLocationFilter} placeholder="Location" compact />
+            <input type="date" value={checkInDateFilter} onChange={e => setCheckInDateFilter(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+        </div>
+
+        <div className="overflow-x-auto max-h-[600px] relative z-10">
+            {filteredCheckIns.length === 0 ? (
+                <div className="text-center p-8 text-slate-400 text-sm">No check-ins match your filters.</div>
+            ) : (
+                <table className="w-full text-sm text-left">
+                    <thead className="bg-orange-50 font-bold text-orange-800 sticky top-0">
+                        <tr>
+                            <th className="p-3">Time</th>
+                            <th className="p-3">Loc</th>
+                            <th className="p-3">Bus</th>
+                            <th className="p-3">Driver</th>
+                            <th className="p-3 text-right">Actions</th>
                         </tr>
-                    ))}
-                </tbody>
-            </table>
-        )}
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {filteredCheckIns.map(c => (
+                            <tr key={c.id} className="hover:bg-orange-50/20 transition">
+                                <td className="p-3">
+                                    <div className="font-bold">{formatTime(c.timestamp)}</div>
+                                    <div className="text-xs text-slate-400">{new Date(c.timestamp).toLocaleDateString()}</div>
+                                </td>
+                                <td className="p-3">{getLocationName(c.locationId)}</td>
+                                <td className="p-3">
+                                    <div className="font-medium">{c.companyName}</div>
+                                    <div className="text-xs text-slate-500">#{c.busNumber}</div>
+                                </td>
+                                <td className="p-3">{c.driverName}</td>
+                                <td className="p-3 text-right">
+                                    <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded transition" title="Delete Check-in">
+                                        <Trash2 size={16} />
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            )}
+        </div>
     </div>
   );
 

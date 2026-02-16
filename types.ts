@@ -1,4 +1,3 @@
-
 export enum UserRole {
   ADMIN = 'ADMIN',
   AGENT = 'AGENT',
@@ -79,13 +78,21 @@ export interface BusCheckIn {
   busNumber: string;
 }
 
+export interface Group {
+  id: string;
+  name: string;
+  createdByUserId: string;
+  memberIds: string[];
+}
+
 export interface Message {
   id: string;
   fromUserId: string;
-  toUserId: string;
+  toUserId?: string; // Optional if groupId is present
+  groupId?: string;  // Optional if direct message
   content: string;
   timestamp: string;
-  isRead: boolean;
+  isRead: boolean; // For groups, this is a simplification. Real systems need per-user read receipts.
 }
 
 export interface AppData {
@@ -93,6 +100,7 @@ export interface AppData {
   locations: Location[];
   logs: LogEntry[];
   busCheckIns: BusCheckIn[];
+  groups: Group[];
   messages: Message[];
   currentUser: User | null;
 }

@@ -1,5 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
-import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType } from '../types';
+import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType, Group } from '../types';
 
 // Initialize Supabase Client
 const getEnvVar = (key: string, fallback: string = '') => {
@@ -102,18 +102,27 @@ const mapMessage = (data: any): Message => ({
   id: data.id,
   fromUserId: data.from_user_id,
   toUserId: data.to_user_id,
+  groupId: data.group_id,
   content: data.content,
   timestamp: data.timestamp,
   isRead: data.is_read
 });
 
+const mapGroup = (data: any): Group => ({
+  id: data.id,
+  name: data.name,
+  createdByUserId: data.created_by,
+  memberIds: data.member_ids || []
+});
+
 export const loadData = async (): Promise<AppData> => {
-  const [users, locations, logs, checkins, messages] = await Promise.all([
+  const [users, locations, logs, checkins, messages, groups] = await Promise.all([
     supabase.from('users').select('*'),
     supabase.from('locations').select('*').order('name'),
     supabase.from('logs').select('*').order('timestamp', { ascending: false }),
     supabase.from('bus_checkins').select('*').order('timestamp', { ascending: false }),
-    supabase.from('messages').select('*').order('timestamp', { ascending: true })
+    supabase.from('messages').select('*').order('timestamp', { ascending: true }),
+    supabase.from('groups').select('*')
   ]);
 
   return {
@@ -122,6 +131,7 @@ export const loadData = async (): Promise<AppData> => {
     logs: (logs.data || []).map(mapLogEntry),
     busCheckIns: (checkins.data || []).map(mapBusCheckIn),
     messages: (messages.data || []).map(mapMessage),
+    groups: (groups.data || []).map(mapGroup),
     currentUser: null
   };
 };
@@ -208,8 +218,21 @@ export const markTripArrived = async (logId: string) => {
   await supabase.from('logs').update({ status: TripStatus.ARRIVED, actual_arrival_time: new Date().toISOString() }).eq('id', logId);
 };
 
-export const sendMessage = async (fromId: string, toId: string, content: string) => {
-  await supabase.from('messages').insert([{ from_user_id: fromId, to_user_id: toId, content, timestamp: new Date().toISOString(), is_read: false }]);
+export const sendMessage = async (fromId: string, toIdOrGroupId: string, content: string, isGroup: boolean = false) => {
+  const payload: any = {
+    from_user_id: fromId,
+    content,
+    timestamp: new Date().toISOString(),
+    is_read: false
+  };
+  
+  if (isGroup) {
+      payload.group_id = toIdOrGroupId;
+  } else {
+      payload.to_user_id = toIdOrGroupId;
+  }
+
+  await supabase.from('messages').insert([payload]);
 };
 
 export const markMessagesAsRead = async (fromUserId: string, toUserId: string) => {
@@ -283,6 +306,20 @@ export const updateLocation = async (id: string, updates: Partial<Location>) => 
   if (updates.address) dbUpdates.address = updates.address;
   if (updates.isActive !== undefined) dbUpdates.is_active = updates.isActive;
   await supabase.from('locations').update(dbUpdates).eq('id', id);
+};
+
+export const createGroup = async (name: string, creatorId: string, memberIds: string[]): Promise<Group> => {
+    // Ensure creator is in members
+    const finalMembers = Array.from(new Set([...memberIds, creatorId]));
+    
+    const { data, error } = await supabase.from('groups').insert([{
+        name,
+        created_by: creatorId,
+        member_ids: finalMembers
+    }]).select().single();
+    
+    if (error) throw error;
+    return mapGroup(data);
 };
 
 // --- DAILY CLEANUP LOGIC ---

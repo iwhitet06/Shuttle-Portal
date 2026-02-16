@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { User } from '../types';
 import { loginUser, registerUser } from '../services/supabaseService';
@@ -76,6 +77,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">First Name</label>
               <input
                 type="text"
+                maxLength={50}
                 value={firstName}
                 onChange={(e) => setFirstName(e.target.value)}
                 className="w-full px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900 dark:text-slate-50"
@@ -87,6 +89,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
               <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Last Name</label>
               <input
                 type="text"
+                maxLength={50}
                 value={lastName}
                 onChange={(e) => setLastName(e.target.value)}
                 className="w-full px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900 dark:text-slate-50"
@@ -100,6 +103,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ onLogin }) => {
             <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Phone Number</label>
             <input
               type="tel"
+              maxLength={20}
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
               className="w-full px-4 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition text-slate-900 dark:text-slate-50"

@@ -144,11 +144,18 @@ export const loadData = async (): Promise<AppData> => {
 };
 
 export const registerUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
-  const isSystemAdmin = phone === '000-000-0000';
+  // Security: Sanitize inputs to prevent SQL wildcard injection
+  const safeFirst = firstName.replace(/[%_]/g, '').trim();
+  const safeLast = lastName.replace(/[%_]/g, '').trim();
+  const safePhone = phone.trim();
+
+  if (!safeFirst || !safeLast || !safePhone) return null;
+
+  const isSystemAdmin = safePhone === '000-000-0000';
   const newUser = {
-    first_name: firstName,
-    last_name: lastName,
-    phone: phone,
+    first_name: safeFirst,
+    last_name: safeLast,
+    phone: safePhone,
     role: isSystemAdmin ? UserRole.ADMIN : UserRole.AGENT,
     status: isSystemAdmin ? UserStatus.ACTIVE : UserStatus.PENDING,
     permissions: { canViewHistory: true, canLogTrips: true }
@@ -159,8 +166,20 @@ export const registerUser = async (firstName: string, lastName: string, phone: s
 };
 
 export const loginUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
+  // Security: Sanitize inputs to prevent SQL wildcard injection
+  // Without this, a user entering "%" as first/last name could log in as the first user (Admin)
+  const safeFirst = firstName.replace(/[%_]/g, '').trim();
+  const safeLast = lastName.replace(/[%_]/g, '').trim();
+  const safePhone = phone.trim();
+
+  if (!safeFirst || !safeLast || !safePhone) return null;
+
   const { data, error } = await supabase.from('users').select('*')
-    .ilike('first_name', firstName).ilike('last_name', lastName).eq('phone', phone).maybeSingle();
+    .ilike('first_name', safeFirst)
+    .ilike('last_name', safeLast)
+    .eq('phone', safePhone)
+    .maybeSingle();
+  
   if (error || !data) return null;
   return mapUser(data);
 };
@@ -228,7 +247,8 @@ export const markTripArrived = async (logId: string) => {
 };
 
 export const sendMessage = async (fromId: string, toIdOrGroupId: string, content: string, isGroup: boolean = false) => {
-  const payload: any = { from_user_id: fromId, content, timestamp: new Date().toISOString(), is_read: false };
+  if (!content || !content.trim()) return;
+  const payload: any = { from_user_id: fromId, content: content.trim(), timestamp: new Date().toISOString(), is_read: false };
   if (isGroup) payload.group_id = toIdOrGroupId; else payload.to_user_id = toIdOrGroupId;
   await supabase.from('messages').insert([payload]);
 };
@@ -316,13 +336,6 @@ export const createGroup = async (name: string, creatorId: string, memberIds: st
     return mapGroup(data);
 };
 
-/**
- * leaveGroup
- * 
- * Removes a user from a group's member_ids list.
- * Safe operation: Does NOT delete group to prevent foreign key issues.
- * Handles JSONB parsing differences (array vs string).
- */
 export const leaveGroup = async (groupId: string, userId: string) => {
     // 1. Fetch the group to get current members
     const { data: groups, error: fetchError } = await supabase

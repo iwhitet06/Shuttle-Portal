@@ -27,6 +27,20 @@ const getNameColor = (userId: string) => {
   return NAME_COLORS[Math.abs(hash) % NAME_COLORS.length];
 };
 
+const getDateLabel = (date: Date) => {
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return 'Today';
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  
+  if (date.getFullYear() === today.getFullYear()) {
+      return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  return date.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser, refreshData, initialSelectedUserId, onClearTarget, onUpdateProfile }) => {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(initialSelectedUserId || null);
   const [msgContent, setMsgContent] = useState('');
@@ -306,16 +320,31 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                       const isMe = msg.fromUserId === currentUser.id; 
                       const sender = selectedGroup && !isMe ? data.users.find(u => u.id === msg.fromUserId) : null;
                       const showSenderName = selectedGroup && !isMe && (idx === 0 || conversation[idx-1].fromUserId !== msg.fromUserId);
+                      
+                      const msgDate = new Date(msg.timestamp);
+                      const prevMsg = idx > 0 ? conversation[idx - 1] : null;
+                      const prevDate = prevMsg ? new Date(prevMsg.timestamp) : null;
+                      const showDateSeparator = !prevDate || msgDate.toDateString() !== prevDate.toDateString();
+
                       return ( 
-                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fadeIn`}>
-                              <div className={`max-w-[85%] md:max-w-[70%] px-2.5 py-1.5 rounded-lg shadow-sm text-[13.5px] leading-[1.3] relative ${isMe ? 'bg-[#DCF8C6] dark:bg-blue-800 text-slate-900 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100'}`}>
-                                  {showSenderName && <div className={`text-[11px] font-bold mb-0.5 ${getNameColor(msg.fromUserId)}`}>{sender?.firstName} {sender?.lastName}</div>}
-                                  <div className="inline-block pr-10">{msg.content}</div>
-                                  <div className={`text-[9px] font-medium absolute bottom-1 right-1.5 opacity-50 ${isMe ? 'text-green-800 dark:text-blue-100' : 'text-slate-400'}`}>
-                                      {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                          <React.Fragment key={msg.id}>
+                              {showDateSeparator && (
+                                  <div className="flex justify-center my-4">
+                                      <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-200 dark:bg-slate-700 px-3 py-0.5 rounded-full shadow-sm uppercase tracking-wide">
+                                          {getDateLabel(msgDate)}
+                                      </span>
                                   </div>
-                              </div>
-                          </div> 
+                              )}
+                              <div className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fadeIn`}>
+                                  <div className={`max-w-[85%] md:max-w-[70%] px-2.5 py-1.5 rounded-lg shadow-sm text-[13.5px] leading-[1.3] relative ${isMe ? 'bg-[#DCF8C6] dark:bg-blue-800 text-slate-900 dark:text-slate-100' : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100'}`}>
+                                      {showSenderName && <div className={`text-[11px] font-bold mb-0.5 ${getNameColor(msg.fromUserId)}`}>{sender?.firstName} {sender?.lastName}</div>}
+                                      <div className="inline-block pr-10">{msg.content}</div>
+                                      <div className={`text-[9px] font-medium absolute bottom-1 right-1.5 opacity-50 ${isMe ? 'text-green-800 dark:text-blue-100' : 'text-slate-400'}`}>
+                                          {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                      </div>
+                                  </div>
+                              </div> 
+                          </React.Fragment>
                       ); 
                   })}
               </div>
@@ -324,7 +353,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
               <div className="flex-shrink-0 bg-white/95 dark:bg-slate-800/95 border-t border-slate-200 dark:border-slate-700 p-2 pb-[calc(env(safe-area-inset-bottom)+72px)] md:pb-3">
                   <form onSubmit={handleSend} className="flex gap-2 max-w-4xl mx-auto items-end">
                       <div className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-center px-1">
-                          <textarea rows={1} value={msgContent} onChange={e => setMsgContent(e.target.value)} placeholder="Message" className="flex-1 bg-transparent border-none py-2 px-3 focus:ring-0 outline-none text-slate-900 dark:text-slate-100 text-base font-medium resize-none max-h-32" 
+                          <textarea rows={1} maxLength={1000} value={msgContent} onChange={e => setMsgContent(e.target.value)} placeholder="Message" className="flex-1 bg-transparent border-none py-2 px-3 focus:ring-0 outline-none text-slate-900 dark:text-slate-100 text-base font-medium resize-none max-h-32" 
                               onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(e as any); } }} />
                       </div>
                       <button type="submit" disabled={!msgContent.trim()} className="bg-blue-600 hover:bg-blue-700 text-white w-9 h-9 rounded-full disabled:opacity-40 flex items-center justify-center flex-shrink-0"><Send size={18} strokeWidth={2.5} /></button>

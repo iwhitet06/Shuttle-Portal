@@ -245,7 +245,6 @@ export const updateUserProfile = async (userId: string, updates: { currentLocati
       const { error } = await supabase.from('users').update(dbUpdates).eq('id', userId);
       if (error) throw error;
   } catch (err: any) {
-      // Fallback for older schemas without assigned_worksite_ids array
       if (updates.assignedWorksiteIds !== undefined && (err.message?.includes('assigned_worksite_ids') || err.code === '42703')) {
           delete dbUpdates.assigned_worksite_ids;
           dbUpdates.assigned_worksite_id = (updates.assignedWorksiteIds && updates.assignedWorksiteIds.length > 0) ? updates.assignedWorksiteIds[0] : null;
@@ -255,15 +254,6 @@ export const updateUserProfile = async (userId: string, updates: { currentLocati
           throw err;
       }
   }
-};
-
-// Kept for backward compatibility
-export const updateUserLocation = async (userId: string, locationId: string) => {
-  await updateUserProfile(userId, { currentLocationId: locationId });
-};
-
-export const updateUserAssignedWorksite = async (userId: string, worksiteIds: string[]) => {
-  await updateUserProfile(userId, { assignedWorksiteIds: worksiteIds });
 };
 
 export const toggleUserPermission = async (userId: string, permission: keyof UserPermissions) => {
@@ -311,16 +301,45 @@ export const createGroup = async (name: string, creatorId: string, memberIds: st
     return mapGroup(data);
 };
 
+/**
+ * leaveGroup
+ * 
+ * Removes a user from a group's member_ids list.
+ * CRITICAL: We DO NOT delete the group even if it becomes empty, because
+ * the 'messages' table has a foreign key constraint on public.groups(id).
+ * Deleting the group would fail if there are any messages linked to it.
+ */
 export const leaveGroup = async (groupId: string, userId: string) => {
-    const { data: group } = await supabase.from('groups').select('member_ids').eq('id', groupId).single();
-    if (group) {
-        const newMembers = (group.member_ids || []).filter((id: string) => id !== userId);
-        if (newMembers.length === 0) {
-            await supabase.from('groups').delete().eq('id', groupId);
-        } else {
-            await supabase.from('groups').update({ member_ids: newMembers }).eq('id', groupId);
-        }
+    // 1. Fetch the group to get current members
+    const { data: groups, error: fetchError } = await supabase
+        .from('groups')
+        .select('member_ids')
+        .eq('id', groupId);
+        
+    if (fetchError) throw fetchError;
+    if (!groups || groups.length === 0) return true;
+
+    const group = groups[0];
+    const currentMembers = Array.isArray(group.member_ids) ? group.member_ids : [];
+    
+    // Normalize IDs for precise filtering
+    const normalizedUserId = String(userId).toLowerCase().trim();
+    const updatedMembers = currentMembers.filter((id: any) => {
+        if (!id) return false;
+        return String(id).toLowerCase().trim() !== normalizedUserId;
+    });
+
+    // 2. Only update if the user was actually in the list
+    if (updatedMembers.length < currentMembers.length) {
+        const { error: updError } = await supabase
+            .from('groups')
+            .update({ member_ids: updatedMembers })
+            .eq('id', groupId);
+            
+        if (updError) throw updError;
     }
+    
+    return true;
 };
 
 export const cleanupStaleTrips = async () => {

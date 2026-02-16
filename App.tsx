@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { User, AppData, UserStatus, UserRole, RouteType } from './types';
 import { loadData, cleanupStaleTrips, updateUserProfile } from './services/supabaseService';
@@ -163,6 +162,7 @@ const App: React.FC = () => {
   }).slice(0, 5) : [];
 
   const filteredUsers = searchQuery ? data.users.filter(u => {
+    if (u.status === UserStatus.REVOKED) return false;
     const nameMatch = (u.firstName + ' ' + u.lastName).toLowerCase().includes(searchQuery.toLowerCase());
     return nameMatch;
   }).slice(0, 5) : [];

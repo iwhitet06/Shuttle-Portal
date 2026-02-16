@@ -9,9 +9,10 @@ interface AdminDashboardProps {
   data: AppData;
   refreshData: () => void;
   currentUser?: User;
+  theme: 'light' | 'dark';
 }
 
-export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshData, currentUser }) => {
+export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshData, currentUser, theme }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'checkins' | 'users' | 'locations'>('overview');
 
   // Log Filtering
@@ -195,25 +196,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const activeUsers = filteredUsers.filter(u => u.status !== UserStatus.REVOKED);
   const revokedUsers = filteredUsers.filter(u => u.status === UserStatus.REVOKED);
 
-  // Filter Check-ins
   const filteredCheckIns = (data.busCheckIns || []).filter(c => {
-      // Date Filter: If empty, show TODAY's checkins by default, unless cleared explicitly? 
-      // Requirement says "Add filters". Let's match log behavior: If date is empty, show ALL? 
-      // Or default to today? Let's default to NO date filter means ALL history, but maintain separate 'todaysCheckIns' var for stats if needed.
-      // Actually for fleet check-ins, recent is most important. 
-      // Let's mirror the Log Logic: if date filter provided, match it. If not, match everything.
-      
       const searchContent = `${c.driverName} ${c.companyName} ${c.busNumber}`.toLowerCase();
       return (!checkInSearch || searchContent.includes(checkInSearch.toLowerCase())) &&
              (checkInLocationFilter === 'ALL' || c.locationId === checkInLocationFilter) &&
              (!checkInDateFilter || new Date(c.timestamp).toLocaleDateString('en-CA') === checkInDateFilter);
   }).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  // Default to today if no filters active? No, show all if "Today" isn't selected.
-  // BUT, to keep the UI clean on initial load, maybe we should default the date picker to Today?
-  // Let's just default to showing everything sorted by newest.
-
-  const todaysCheckIns = data.busCheckIns.filter(c => new Date(c.timestamp).toDateString() === new Date().toDateString());
 
   const exportCSV = () => {
       alert("Exporting CSV..."); 
@@ -224,23 +212,20 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   };
 
   const renderLogs = () => (
-    // REMOVED 'overflow-hidden' here to allow dropdown to show
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col mt-6 relative">
-      <div className="p-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center rounded-t-xl">
-        <h3 className="font-bold text-slate-800 flex items-center gap-2"><ClipboardList size={20} className="text-blue-600"/> Master Trip Logs</h3>
-        <button onClick={exportCSV} className="flex items-center gap-2 bg-white border border-slate-300 px-3 py-1.5 rounded-lg text-sm font-medium"><Download size={16} /> Export CSV</button>
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col mt-6 relative">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center rounded-t-xl">
+        <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><ClipboardList size={20} className="text-blue-600 dark:text-blue-400"/> Master Trip Logs</h3>
+        <button onClick={exportCSV} className="flex items-center gap-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600"><Download size={16} /> Export CSV</button>
       </div>
-      {/* Added 'relative z-20' to ensure filters stack above the table content */}
-      <div className="p-4 bg-slate-50 grid grid-cols-1 md:grid-cols-4 gap-3 border-b border-slate-200 relative z-20">
-          <input type="text" placeholder="Search..." value={logSearch} onChange={e => setLogSearch(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 md:grid-cols-4 gap-3 border-b border-slate-200 dark:border-slate-700 relative z-20">
+          <input type="text" placeholder="Search..." value={logSearch} onChange={e => setLogSearch(e.target.value)} className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
           <SearchableDropdown options={[{id:'ALL', name:'All Locs'}, ...data.locations]} value={logLocationFilter} onChange={setLogLocationFilter} placeholder="Location" compact />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} className="px-3 py-2 border rounded-lg text-sm"><option value="ALL">All Status</option><option value={TripStatus.IN_TRANSIT}>In Transit</option><option value={TripStatus.ARRIVED}>Arrived</option></select>
-          <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700"><option value="ALL">All Status</option><option value={TripStatus.IN_TRANSIT}>In Transit</option><option value={TripStatus.ARRIVED}>Arrived</option></select>
+          <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
       </div>
-      {/* Table container has 'rounded-b-xl' to maintain the card look at the bottom */}
       <div className="overflow-x-auto max-h-[500px] rounded-b-xl relative z-10">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-500 font-semibold border-b text-xs uppercase sticky top-0">
+          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-semibold border-b dark:border-slate-700 text-xs uppercase sticky top-0">
             <tr>
               <th className="p-4 w-8"></th>
               <th className="p-4">Status</th>
@@ -252,46 +237,44 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
               <th className="p-4">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {filteredLogs.map(log => {
                 const isExpanded = expandedLogId === log.id;
                 const agent = getUser(log.userId);
                 return (
                 <React.Fragment key={log.id}>
-                <tr onClick={() => setExpandedLogId(isExpanded ? null : log.id)} className={`hover:bg-slate-50 cursor-pointer ${isExpanded ? 'bg-blue-50/50' : ''}`}>
-                    <td className="p-4 text-slate-400">
+                <tr onClick={() => setExpandedLogId(isExpanded ? null : log.id)} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer ${isExpanded ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
+                    <td className="p-4 text-slate-400 dark:text-slate-500">
                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </td>
                     <td className="p-4">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${log.status === TripStatus.IN_TRANSIT ? 'bg-green-100 text-green-700' : 'bg-slate-100'}`}>
+                        <span className={`px-2 py-1 rounded text-xs font-bold ${log.status === TripStatus.IN_TRANSIT ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : 'bg-slate-100 dark:bg-slate-700 dark:text-slate-300'}`}>
                             {log.status === TripStatus.IN_TRANSIT ? 'In Transit' : 'Arrived'}
                         </span>
                     </td>
                     <td className="p-4">
                       <div className="font-bold">{formatTime(log.timestamp)}</div>
-                      <div className="text-xs text-slate-400">{new Date(log.timestamp).toLocaleDateString()}</div>
+                      <div className="text-xs text-slate-400 dark:text-slate-500">{new Date(log.timestamp).toLocaleDateString()}</div>
                     </td>
                     <td className="p-4">
-                      <div className="font-medium">{getLocationName(log.departLocationId)} <span className="text-slate-400">&rarr;</span> {getLocationName(log.arrivalLocationId)}</div>
-                      <div className="text-xs text-slate-400">{log.routeType === RouteType.HOTEL_TO_SITE ? 'Hotel to Site' : 'Site to Hotel'}</div>
+                      <div className="font-medium text-slate-800 dark:text-slate-200">{getLocationName(log.departLocationId)} <span className="text-slate-400 dark:text-slate-500">&rarr;</span> {getLocationName(log.arrivalLocationId)}</div>
+                      <div className="text-xs text-slate-400 dark:text-slate-500">{log.routeType === RouteType.HOTEL_TO_SITE ? 'Hotel to Site' : 'Site to Hotel'}</div>
                     </td>
                     <td className="p-4">
-                      <div className="font-bold">{log.companyName}</div>
-                      <div className="text-xs">Bus {log.busNumber} • {log.driverName}</div>
+                      <div className="font-bold text-slate-800 dark:text-slate-200">{log.companyName}</div>
+                      <div className="text-xs text-slate-600 dark:text-slate-400">Bus {log.busNumber} • {log.driverName}</div>
                     </td>
                     <td className="p-4 font-bold text-center">{log.passengerCount}</td>
                     <td className="p-4">
                         <div className="space-y-1">
-                            {/* Actual Arrival */}
                             {log.status === TripStatus.ARRIVED && log.actualArrivalTime ? (
                                 <div className="text-xs">
-                                    <span className="text-green-600 font-bold">Arr:</span> <span className="font-mono">{formatTime(log.actualArrivalTime)}</span>
+                                    <span className="text-green-600 dark:text-green-400 font-bold">Arr:</span> <span className="font-mono">{formatTime(log.actualArrivalTime)}</span>
                                 </div>
                             ) : null}
                             
-                            {/* ETA - Prominent */}
                             {log.eta && (
-                                <div className={`text-xs ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-800 border border-blue-100' : 'text-slate-500'} px-2 py-1 rounded inline-block font-bold`}>
+                                <div className={`text-xs ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-100 dark:border-blue-900' : 'text-slate-500 dark:text-slate-400'} px-2 py-1 rounded inline-block font-bold`}>
                                     <span className="uppercase text-[10px] opacity-70 mr-1">ETA:</span>
                                     {formatTimeFromStr(log.eta)}
                                 </div>
@@ -301,31 +284,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     <td className="p-4">
                         {isFullAdmin && (
                             <div className="flex gap-2">
-                                <button onClick={(e) => openEditLogModal(log, e)} className="text-blue-600 hover:bg-blue-50 p-1 rounded" title="Edit"><Edit2 size={16}/></button>
-                                <button onClick={(e) => handleDeleteLog(log.id, e)} className="text-red-600 hover:bg-red-50 p-1 rounded" title="Delete"><Trash2 size={16}/></button>
+                                <button onClick={(e) => openEditLogModal(log, e)} className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 p-1 rounded" title="Edit"><Edit2 size={16}/></button>
+                                <button onClick={(e) => handleDeleteLog(log.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-slate-700 p-1 rounded" title="Delete"><Trash2 size={16}/></button>
                             </div>
                         )}
                     </td>
                 </tr>
                 {isExpanded && (
-                    <tr className="bg-blue-50/30 animate-fadeIn">
+                    <tr className="bg-blue-50/30 dark:bg-blue-900/10 animate-fadeIn">
                         <td colSpan={8} className="p-0">
-                            <div className="p-4 border-b border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-slate-600">
+                            <div className="p-4 border-b border-slate-100 dark:border-slate-700 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-slate-600 dark:text-slate-400">
                                 <div>
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Submitted By</div>
+                                    <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">Submitted By</div>
                                     <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 bg-indigo-100 text-indigo-700 rounded-full flex items-center justify-center text-xs font-bold">
+                                        <div className="w-6 h-6 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-full flex items-center justify-center text-xs font-bold">
                                             {agent ? agent.firstName[0] : '?'}
                                         </div>
                                         <div>
-                                            <div className="font-semibold text-slate-800">{agent ? `${agent.firstName} ${agent.lastName}` : 'Unknown Agent'}</div>
-                                            {agent && <div className="text-xs text-slate-400">ID: {agent.id}</div>}
+                                            <div className="font-semibold text-slate-800 dark:text-slate-200">{agent ? `${agent.firstName} ${agent.lastName}` : 'Unknown Agent'}</div>
+                                            {agent && <div className="text-xs text-slate-400 dark:text-slate-500">ID: {agent.id}</div>}
                                         </div>
                                     </div>
                                 </div>
                                 <div>
-                                    <div className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Notes</div>
-                                    <div className="bg-white border border-slate-200 p-2 rounded text-slate-700 italic">
+                                    <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">Notes</div>
+                                    <div className="bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 p-2 rounded text-slate-700 dark:text-slate-300 italic">
                                         {log.notes || 'No notes provided.'}
                                     </div>
                                 </div>
@@ -342,39 +325,40 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
     </div>
   );
 
-  const renderOverview = () => (
+  const renderOverview = () => {
+    const chartAxisColor = theme === 'dark' ? '#94a3b8' : '#64748b';
+    const chartGridColor = theme === 'dark' ? '#334155' : '#f1f5f9';
+
+    return (
       <div className="space-y-6">
-        {/* KPI Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Total Departures</div>
-            <div className="text-2xl font-bold text-slate-800">{totalLogs}</div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Departures</div>
+            <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{totalLogs}</div>
             <div className="text-xs text-slate-400 mt-1">Today</div>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Active Trips</div>
-            <div className="text-2xl font-bold text-blue-600">{activeTrips}</div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Active Trips</div>
+            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{activeTrips}</div>
             <div className="text-xs text-slate-400 mt-1">In Transit</div>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Completed</div>
-            <div className="text-2xl font-bold text-green-600">{completedTripsToday}</div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Completed</div>
+            <div className="text-2xl font-bold text-green-600 dark:text-green-400">{completedTripsToday}</div>
             <div className="text-xs text-slate-400 mt-1">Today</div>
           </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="text-slate-500 text-xs font-bold uppercase tracking-wider mb-1">Total Pax</div>
-            <div className="text-2xl font-bold text-slate-800">{totalPassengersToday}</div>
+          <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Pax</div>
+            <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{totalPassengersToday}</div>
             <div className="text-xs text-slate-400 mt-1">Passengers moved</div>
           </div>
         </div>
 
-        {/* 1. Logs Table */}
         {renderLogs()}
 
-        {/* 2. Charts Section */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2">
-                <BarChart3 size={18} className="text-blue-600" />
+        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-4 flex items-center gap-2">
+                <BarChart3 size={18} className="text-blue-600 dark:text-blue-400" />
                 Hourly Trip Volume
             </h3>
             <div className="h-64 w-full">
@@ -386,12 +370,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                         <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
                     </linearGradient>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                    <XAxis dataKey="time" tick={{fontSize: 10}} axisLine={false} tickLine={false} />
-                    <YAxis tick={{fontSize: 10}} axisLine={false} tickLine={false} />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartGridColor} />
+                    <XAxis dataKey="time" tick={{fontSize: 10, fill: chartAxisColor}} axisLine={false} tickLine={false} />
+                    <YAxis tick={{fontSize: 10, fill: chartAxisColor}} axisLine={false} tickLine={false} />
                     <Tooltip 
-                    contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
-                    cursor={{stroke: '#cbd5e1', strokeWidth: 1, strokeDasharray: '4 4'}}
+                        contentStyle={{
+                            borderRadius: '8px', 
+                            border: `1px solid ${theme === 'dark' ? '#334155' : '#e2e8f0'}`,
+                            backgroundColor: theme === 'dark' ? '#1e293b' : '#ffffff',
+                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
+                        }}
+                        cursor={{strokeWidth: 1, strokeDasharray: '4 4'}}
                     />
                     <Area type="monotone" dataKey="trips" stroke="#2563eb" strokeWidth={2} fillOpacity={1} fill="url(#colorTrips)" />
                 </AreaChart>
@@ -399,33 +388,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
             </div>
         </div>
       </div>
-  );
+  )};
 
   const renderCheckIns = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 flex flex-col relative">
-        <div className="p-4 border-b border-slate-200 bg-orange-50/30 flex justify-between items-center rounded-t-xl">
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col relative">
+        <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-orange-50/30 dark:bg-orange-900/20 flex justify-between items-center rounded-t-xl">
             <div>
-                <h3 className="font-bold text-orange-900 flex items-center gap-2">
+                <h3 className="font-bold text-orange-900 dark:text-orange-200 flex items-center gap-2">
                     <ArrowDownCircle size={20} />
                     Fleet Check-ins
                 </h3>
             </div>
-            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full font-bold">{filteredCheckIns.length}</span>
+            <span className="text-xs bg-orange-100 dark:bg-orange-800/50 text-orange-800 dark:text-orange-200 px-2 py-1 rounded-full font-bold">{filteredCheckIns.length}</span>
         </div>
 
-        {/* Filters for Check-ins */}
-        <div className="p-4 bg-slate-50 grid grid-cols-1 md:grid-cols-3 gap-3 border-b border-slate-200 relative z-20">
-            <input type="text" placeholder="Search check-ins..." value={checkInSearch} onChange={e => setCheckInSearch(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
+        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 md:grid-cols-3 gap-3 border-b border-slate-200 dark:border-slate-700 relative z-20">
+            <input type="text" placeholder="Search check-ins..." value={checkInSearch} onChange={e => setCheckInSearch(e.target.value)} className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
             <SearchableDropdown options={[{id:'ALL', name:'All Locations'}, ...data.locations]} value={checkInLocationFilter} onChange={setCheckInLocationFilter} placeholder="Location" compact />
-            <input type="date" value={checkInDateFilter} onChange={e => setCheckInDateFilter(e.target.value)} className="px-3 py-2 border rounded-lg text-sm" />
+            <input type="date" value={checkInDateFilter} onChange={e => setCheckInDateFilter(e.target.value)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
         </div>
 
         <div className="overflow-x-auto max-h-[600px] relative z-10">
             {filteredCheckIns.length === 0 ? (
-                <div className="text-center p-8 text-slate-400 text-sm">No check-ins match your filters.</div>
+                <div className="text-center p-8 text-slate-400 dark:text-slate-500 text-sm">No check-ins match your filters.</div>
             ) : (
                 <table className="w-full text-sm text-left">
-                    <thead className="bg-orange-50 font-bold text-orange-800 sticky top-0">
+                    <thead className="bg-orange-50 dark:bg-orange-900/10 font-bold text-orange-800 dark:text-orange-300 sticky top-0">
                         <tr>
                             <th className="p-3">Time</th>
                             <th className="p-3">Loc</th>
@@ -434,21 +422,21 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                             <th className="p-3 text-right">Actions</th>
                         </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
                         {filteredCheckIns.map(c => (
-                            <tr key={c.id} className="hover:bg-orange-50/20 transition">
+                            <tr key={c.id} className="hover:bg-orange-50/20 dark:hover:bg-orange-900/10 transition">
                                 <td className="p-3">
                                     <div className="font-bold">{formatTime(c.timestamp)}</div>
-                                    <div className="text-xs text-slate-400">{new Date(c.timestamp).toLocaleDateString()}</div>
+                                    <div className="text-xs text-slate-400 dark:text-slate-500">{new Date(c.timestamp).toLocaleDateString()}</div>
                                 </td>
                                 <td className="p-3">{getLocationName(c.locationId)}</td>
                                 <td className="p-3">
-                                    <div className="font-medium">{c.companyName}</div>
-                                    <div className="text-xs text-slate-500">#{c.busNumber}</div>
+                                    <div className="font-medium text-slate-800 dark:text-slate-200">{c.companyName}</div>
+                                    <div className="text-xs text-slate-500 dark:text-slate-400">#{c.busNumber}</div>
                                 </td>
                                 <td className="p-3">{c.driverName}</td>
                                 <td className="p-3 text-right">
-                                    <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 hover:bg-red-50 p-1.5 rounded transition" title="Delete Check-in">
+                                    <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded transition" title="Delete Check-in">
                                         <Trash2 size={16} />
                                     </button>
                                 </td>
@@ -462,8 +450,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   );
 
   const UserTable = ({ users, title, isRevoked = false }: { users: User[], title: string, isRevoked?: boolean }) => (
-    <div className={`bg-white rounded-xl shadow-sm border overflow-hidden ${isRevoked ? 'border-red-100 mt-8' : 'border-slate-200'}`}>
-      <div className={`p-4 border-b ${isRevoked ? 'bg-red-50 border-red-100 text-red-800' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+    <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border overflow-hidden ${isRevoked ? 'border-red-100 dark:border-red-800/50 mt-8' : 'border-slate-200 dark:border-slate-700'}`}>
+      <div className={`p-4 border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/50 text-red-800 dark:text-red-300' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'}`}>
           <h3 className="font-bold flex items-center gap-2">
             {isRevoked ? <ShieldAlert size={18} /> : <UserIcon size={18} />}
             {title} ({users.length})
@@ -471,7 +459,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className={`font-medium border-b ${isRevoked ? 'bg-red-50 text-red-600 border-red-100' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+          <thead className={`font-medium border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-300 border-red-100 dark:border-red-800/50' : 'bg-slate-50 dark:bg-slate-700/30 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}>
             <tr>
               <th className="p-4">User Details</th>
               <th className="p-4">Contact</th>
@@ -482,87 +470,64 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
               <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {users.map(user => {
                 const isSysAdmin = isSystemAdminUser(user);
                 return (
-              <tr key={user.id} className="hover:bg-slate-50 transition">
+              <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
                 <td className="p-4">
-                   <div className="font-medium text-slate-800">
+                   <div className="font-medium text-slate-800 dark:text-slate-100">
                         {user.firstName} {user.lastName}
-                        {isSysAdmin && <span className="ml-2 text-[10px] bg-yellow-100 text-yellow-800 px-1.5 py-0.5 rounded border border-yellow-200 uppercase tracking-wide">SysAdmin</span>}
+                        {isSysAdmin && <span className="ml-2 text-[10px] bg-yellow-100 dark:bg-yellow-800/50 text-yellow-800 dark:text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-200 dark:border-yellow-700/50 uppercase tracking-wide">SysAdmin</span>}
                    </div>
-                   <div className="text-xs text-slate-400 font-mono mt-0.5">ID: {user.id}</div>
+                   <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mt-0.5">ID: {user.id}</div>
                 </td>
-                <td className="p-4 text-slate-500 font-mono">{user.phone}</td>
+                <td className="p-4 text-slate-500 dark:text-slate-400 font-mono">{user.phone}</td>
                 <td className="p-4">
                     <div className="space-y-2">
-                        {/* Station / Current Location */}
                         <div className="flex items-start gap-1.5">
                             <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
                             <div>
-                                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-none mb-0.5">Station</span>
-                                {user.currentLocationId ? (
-                                    <span className="text-xs font-medium text-slate-700 block leading-tight">
-                                        {getLocationName(user.currentLocationId)}
-                                    </span>
-                                ) : (
-                                    <span className="text-xs text-slate-400 italic">Not stationed</span>
-                                )}
+                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-0.5">Station</span>
+                                {user.currentLocationId ? <span className="text-xs font-medium text-slate-700 dark:text-slate-300 block leading-tight">{getLocationName(user.currentLocationId)}</span> : <span className="text-xs text-slate-400 italic">Not stationed</span>}
                             </div>
                         </div>
 
-                        {/* Assigned Worksites */}
                         <div className="flex items-start gap-1.5">
                             <Briefcase size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
                             <div>
-                                <span className="text-[10px] uppercase font-bold text-slate-400 block leading-none mb-0.5">Targets</span>
+                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-0.5">Targets</span>
                                 {user.assignedWorksiteIds && user.assignedWorksiteIds.length > 0 ? (
                                     <div className="flex flex-col gap-1">
-                                        {user.assignedWorksiteIds.map(id => (
-                                            <span key={id} className="text-xs font-medium text-indigo-700 leading-tight">
-                                                {getLocationName(id)}
-                                            </span>
-                                        ))}
+                                        {user.assignedWorksiteIds.map(id => <span key={id} className="text-xs font-medium text-indigo-700 dark:text-indigo-400 leading-tight">{getLocationName(id)}</span>)}
                                     </div>
-                                ) : (
-                                    <span className="text-xs text-slate-400 italic">No assignments</span>
-                                )}
+                                ) : <span className="text-xs text-slate-400 italic">No assignments</span>}
                             </div>
                         </div>
                     </div>
                 </td>
                 <td className="p-4">
-                    {/* Role Dropdown */}
                     <div className="relative w-32">
                         <select 
                             value={user.role}
                             disabled={isSysAdmin}
-                            onChange={async (e) => {
-                                const newRole = e.target.value as UserRole;
-                                await updateUserRole(user.id, newRole);
-                                refreshData();
-                            }}
+                            onChange={async (e) => { await updateUserRole(user.id, e.target.value as UserRole); refreshData(); }}
                             className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                                user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 focus:ring-purple-500' :
-                                'bg-slate-50 text-slate-600 border-slate-200 focus:ring-slate-500'
+                                user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800/50 focus:ring-purple-500' :
+                                'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 focus:ring-slate-500'
                             }`}
                         >
                             <option value={UserRole.AGENT}>AGENT</option>
                             <option value={UserRole.ADMIN}>ADMIN</option>
                         </select>
-                        {!isSysAdmin && (
-                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50">
-                                <ChevronDown size={12} />
-                            </div>
-                        )}
+                        {!isSysAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>}
                     </div>
                 </td>
                 <td className="p-4">
                   <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700' :
-                    user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700' :
-                    'bg-red-100 text-red-700'
+                    user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' :
+                    user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' :
+                    'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
                   }`}>
                     {user.status}
                   </span>
@@ -571,7 +536,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                    <div className="flex items-center gap-2">
                     <button 
                         onClick={() => handleAction(() => toggleUserPermission(user.id, 'canViewHistory'))}
-                        className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50' : 'text-slate-400 bg-slate-100'}`}
+                        className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/50' : 'text-slate-400 bg-slate-100 dark:bg-slate-700'}`}
                         title="Toggle View History"
                     >
                         {user.permissions.canViewHistory ? <Eye size={16} /> : <EyeOff size={16} />}
@@ -579,7 +544,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     <button
                         onClick={() => openPermissionsModal(user)}
                         className={`p-1.5 rounded transition flex items-center gap-1 text-xs font-bold px-2 ${
-                            user.permissions.allowedLocationIds ? 'text-orange-600 bg-orange-50 border border-orange-200' : 'text-slate-600 bg-slate-100 border border-slate-200'
+                            user.permissions.allowedLocationIds ? 'text-orange-600 bg-orange-50 dark:bg-orange-900/50 border border-orange-200 dark:border-orange-800/50' : 'text-slate-600 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600'
                         }`}
                         title="Manage Location Access"
                     >
@@ -593,26 +558,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     {!isSysAdmin && (
                         <>
                         {user.status === UserStatus.PENDING && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 p-2 rounded" title="Approve">
+                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 dark:bg-green-900/50 dark:hover:bg-green-900 dark:text-green-300 p-2 rounded" title="Approve">
                             <CheckCircle size={16} />
                         </button>
                         )}
                         
                         {user.status !== UserStatus.REVOKED && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 p-2 rounded" title="Revoke Access">
+                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-900 dark:text-red-300 p-2 rounded" title="Revoke Access">
                             <XCircle size={16} />
                         </button>
                         )}
 
                         {user.status === UserStatus.REVOKED && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 p-2 rounded" title="Restore Access">
+                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200 p-2 rounded" title="Restore Access">
                             <CheckCircle size={16} />
                         </button>
                         )}
                         </>
                     )}
                     {isSysAdmin && (
-                        <span className="text-slate-400 text-xs italic flex items-center gap-1"><ShieldCheck size={14}/> Protected</span>
+                        <span className="text-slate-400 dark:text-slate-500 text-xs italic flex items-center gap-1"><ShieldCheck size={14}/> Protected</span>
                     )}
                   </div>
                 </td>
@@ -626,8 +591,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
 
   const renderUsers = () => (
     <div className="space-y-6">
-       {/* User Search & Filters */}
-       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4 md:space-y-0 md:flex md:items-center md:gap-4">
+       <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 md:space-y-0 md:flex md:items-center md:gap-4">
            <div className="relative flex-1">
                 <Search className="absolute left-3 top-2.5 text-slate-400 w-5 h-5" />
                 <input 
@@ -635,7 +599,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     placeholder="Search users..." 
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
+                    className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50"
                 />
            </div>
            
@@ -643,7 +607,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
              <select 
                value={userRoleFilter}
                onChange={(e) => setUserRoleFilter(e.target.value as any)}
-               className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900"
+               className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900 dark:text-slate-200"
              >
                <option value="ALL">All Roles</option>
                <option value={UserRole.ADMIN}>Admins</option>
@@ -653,7 +617,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
              <select 
                value={userStatusFilter}
                onChange={(e) => setUserStatusFilter(e.target.value as any)}
-               className="px-3 py-2 bg-slate-50 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900"
+               className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900 dark:text-slate-200"
              >
                <option value="ALL">All Statuses</option>
                <option value={UserStatus.ACTIVE}>Active</option>
@@ -673,60 +637,29 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
            </div>
        </div>
 
-       {/* Active Users Table */}
        {activeUsers.length > 0 && <UserTable users={activeUsers} title="Active & Pending Users" />}
-
-       {/* Revoked Users Table */}
-       {revokedUsers.length > 0 && (
-         <UserTable users={revokedUsers} title="Revoked Users" isRevoked={true} />
-       )}
+       {revokedUsers.length > 0 && <UserTable users={revokedUsers} title="Revoked Users" isRevoked={true} />}
     </div>
   );
 
   const renderLocations = () => (
     <div className="space-y-6">
-       {/* Add/Edit Location Card */}
-       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <h3 className="font-bold text-slate-800 mb-4 flex items-center justify-between">
+       <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
+            <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-4 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                    {editingLocationId ? (
-                        <>
-                            <Edit2 className="text-white bg-orange-500 rounded-full p-1.5" size={28}/> 
-                            <span>Edit Location</span>
-                        </>
-                    ) : (
-                        <>
-                            <Plus className="text-white bg-blue-600 rounded-full p-1" size={24}/> 
-                            <span>Add New Location</span>
-                        </>
-                    )}
+                    {editingLocationId ? <><Edit2 className="text-white bg-orange-500 rounded-full p-1.5" size={28}/> <span>Edit Location</span></> : <><Plus className="text-white bg-blue-600 rounded-full p-1" size={24}/> <span>Add New Location</span></>}
                 </div>
-                {editingLocationId && (
-                    <button onClick={cancelEditLocation} className="text-sm text-slate-500 hover:text-slate-800 underline">
-                        Cancel Edit
-                    </button>
-                )}
+                {editingLocationId && <button onClick={cancelEditLocation} className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 underline">Cancel Edit</button>}
             </h3>
             <form onSubmit={handleLocationSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Name</label>
-                    <input 
-                        type="text" 
-                        value={locName}
-                        onChange={e => setLocName(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
-                        placeholder="e.g. Westin Downtown"
-                        required
-                    />
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Name</label>
+                    <input type="text" value={locName} onChange={e => setLocName(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50 bg-white dark:bg-slate-700" placeholder="e.g. Westin Downtown" required />
                 </div>
                 <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Type</label>
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Type</label>
                     <div className="relative">
-                      <select 
-                          value={locType}
-                          onChange={e => setLocType(e.target.value as LocationType)}
-                          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none bg-white text-slate-900"
-                      >
+                      <select value={locType} onChange={e => setLocType(e.target.value as LocationType)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-50">
                           <option value={LocationType.HOTEL}>Hotel</option>
                           <option value={LocationType.WORKSITE}>Worksite</option>
                       </select>
@@ -734,27 +667,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     </div>
                 </div>
                  <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Address (Optional)</label>
-                    <input 
-                        type="text" 
-                        value={locAddress}
-                        onChange={e => setLocAddress(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900"
-                        placeholder="123 Main St"
-                    />
+                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Address (Optional)</label>
+                    <input type="text" value={locAddress} onChange={e => setLocAddress(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50 bg-white dark:bg-slate-700" placeholder="123 Main St" />
                 </div>
-                <button type="submit" className={`font-bold py-2 rounded-lg hover:opacity-90 transition flex items-center justify-center gap-2 shadow-sm text-white ${editingLocationId ? 'bg-orange-500' : 'bg-blue-600'}`}>
-                    {editingLocationId ? <Save size={16} /> : <Plus size={16} />} 
-                    {editingLocationId ? 'Update Location' : 'Add Location'}
-                </button>
+                <button type="submit" className={`font-bold py-2 rounded-lg hover:opacity-90 transition flex items-center justify-center gap-2 shadow-sm text-white ${editingLocationId ? 'bg-orange-500' : 'bg-blue-600'}`}>{editingLocationId ? <Save size={16} /> : <Plus size={16} />} {editingLocationId ? 'Update Location' : 'Add Location'}</button>
             </form>
         </div>
 
-      {/* List Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
        <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 text-slate-600 font-medium border-b border-slate-200">
+          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700">
             <tr>
               <th className="p-4">Location Details</th>
               <th className="p-4">Type</th>
@@ -762,46 +685,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
               <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
             {data.locations.map(loc => (
-              <tr key={loc.id} className={`hover:bg-slate-50 transition ${editingLocationId === loc.id ? 'bg-blue-50/50' : ''}`}>
+              <tr key={loc.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 transition ${editingLocationId === loc.id ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
                 <td className="p-4">
-                    <div className="font-bold text-slate-800 flex items-center gap-2">
+                    <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
                        <MapPin size={16} className="text-slate-400"/>
                        {loc.name}
                     </div>
-                    {loc.address && (
-                        <div className="text-xs text-slate-500 ml-6 mt-1">{loc.address}</div>
-                    )}
+                    {loc.address && <div className="text-xs text-slate-500 dark:text-slate-400 ml-6 mt-1">{loc.address}</div>}
                 </td>
                 <td className="p-4">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${loc.type === LocationType.HOTEL ? 'bg-indigo-50 text-indigo-700' : 'bg-orange-50 text-orange-700'}`}>
+                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${loc.type === LocationType.HOTEL ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300' : 'bg-orange-50 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300'}`}>
                         {loc.type === LocationType.HOTEL ? <Building size={12}/> : <Activity size={12}/>}
                         {loc.type}
                     </span>
                 </td>
                 <td className="p-4">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${loc.isActive ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${loc.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
                     {loc.isActive ? 'Active' : 'Disabled'}
                   </span>
                 </td>
                 <td className="p-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                        <button 
-                            onClick={() => startEditLocation(loc)}
-                            className="p-1.5 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded transition"
-                            title="Edit"
-                        >
-                            <Edit2 size={16} />
-                        </button>
-                        <div className="w-px h-4 bg-slate-200"></div>
-                        <button 
-                            onClick={() => handleAction(() => toggleLocation(loc.id))}
-                            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${loc.isActive ? 'bg-blue-600' : 'bg-slate-200'}`}
-                            title="Toggle Status"
-                        >
-                            <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${loc.isActive ? 'translate-x-6' : 'translate-x-1'}`} />
-                        </button>
+                        <button onClick={() => startEditLocation(loc)} className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 rounded transition" title="Edit"><Edit2 size={16} /></button>
+                        <div className="w-px h-4 bg-slate-200 dark:bg-slate-600"></div>
+                        <button onClick={() => handleAction(() => toggleLocation(loc.id))} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${loc.isActive ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-600'}`} title="Toggle Status"><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${loc.isActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
                     </div>
                 </td>
               </tr>
@@ -817,46 +726,26 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
     <div className="p-4 md:p-8 max-w-7xl mx-auto relative">
       <div className="mb-8 flex items-end justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800">Admin Console</h2>
-          <p className="text-slate-500">Operational oversight and configuration.</p>
+          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Admin Console</h2>
+          <p className="text-slate-500 dark:text-slate-400">Operational oversight and configuration.</p>
         </div>
-        <div className="text-sm text-slate-400 bg-slate-100 px-3 py-1 rounded-full">
+        <div className="text-sm text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
            {new Date().toDateString()}
         </div>
       </div>
 
-      <div className="flex space-x-2 mb-6 border-b border-slate-200 pb-1 overflow-x-auto no-scrollbar">
-        <button 
-          onClick={() => setActiveTab('overview')}
-          className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'overview' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          <div className="flex items-center space-x-2">
-            <Activity size={16} /> <span>Overview & Logs</span>
-          </div>
+      <div className="flex space-x-2 mb-6 border-b border-slate-200 dark:border-slate-700 pb-1 overflow-x-auto no-scrollbar">
+        <button onClick={() => setActiveTab('overview')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'overview' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+          <div className="flex items-center space-x-2"><Activity size={16} /> <span>Overview & Logs</span></div>
         </button>
-        <button 
-          onClick={() => setActiveTab('checkins')}
-          className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'checkins' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          <div className="flex items-center space-x-2">
-            <ArrowDownCircle size={16} /> <span>Fleet Check-ins</span>
-          </div>
+        <button onClick={() => setActiveTab('checkins')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'checkins' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+          <div className="flex items-center space-x-2"><ArrowDownCircle size={16} /> <span>Fleet Check-ins</span></div>
         </button>
-        <button 
-          onClick={() => setActiveTab('users')}
-          className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'users' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-          <div className="flex items-center space-x-2">
-            <UserCog size={16} /> <span>User Management</span>
-          </div>
+        <button onClick={() => setActiveTab('users')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'users' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+          <div className="flex items-center space-x-2"><UserCog size={16} /> <span>User Management</span></div>
         </button>
-        <button 
-          onClick={() => setActiveTab('locations')}
-          className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'locations' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-slate-500 hover:text-slate-800'}`}
-        >
-           <div className="flex items-center space-x-2">
-            <MapPin size={16} /> <span>Locations</span>
-          </div>
+        <button onClick={() => setActiveTab('locations')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'locations' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
+           <div className="flex items-center space-x-2"><MapPin size={16} /> <span>Locations</span></div>
         </button>
       </div>
 
@@ -865,202 +754,93 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       {activeTab === 'users' && renderUsers()}
       {activeTab === 'locations' && renderLocations()}
 
-      {/* Permissions Modal */}
       {managingPermissionsUser && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-fadeIn">
-                  <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+              <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-fadeIn">
+                  <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
                       <div>
-                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                            <Lock size={20} className="text-blue-600" />
-                            Location Access Control
-                        </h3>
-                        <p className="text-sm text-slate-500 mt-1">
-                            Configure visibility for <span className="font-semibold text-slate-700">{managingPermissionsUser.firstName} {managingPermissionsUser.lastName}</span>
-                        </p>
+                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><Lock size={20} className="text-blue-600 dark:text-blue-400" /> Location Access Control</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Configure visibility for <span className="font-semibold text-slate-700 dark:text-slate-200">{managingPermissionsUser.firstName} {managingPermissionsUser.lastName}</span></p>
                       </div>
-                      <button onClick={closePermissionsModal} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 transition">
-                          <X size={20} />
-                      </button>
+                      <button onClick={closePermissionsModal} className="p-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full text-slate-500 dark:text-slate-400 transition"><X size={20} /></button>
                   </div>
                   
-                  <div className="p-6 overflow-y-auto flex-1 bg-slate-50/30">
-                      <div className="mb-6 flex items-center justify-between bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                  <div className="p-6 overflow-y-auto flex-1 bg-slate-50/30 dark:bg-slate-900/30">
+                      <div className="mb-6 flex items-center justify-between bg-white dark:bg-slate-700/50 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
                           <div>
-                              <div className="font-bold text-slate-800">Restrict Location Access?</div>
-                              <div className="text-xs text-slate-500 mt-1">If OFF, the user can access ALL active locations in the system.</div>
+                              <div className="font-bold text-slate-800 dark:text-slate-100">Restrict Location Access?</div>
+                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">If OFF, the user can access ALL active locations in the system.</div>
                           </div>
-                          <button 
-                              onClick={() => setIsRestrictedMode(!isRestrictedMode)}
-                              className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${isRestrictedMode ? 'bg-blue-600' : 'bg-slate-200'}`}
-                          >
-                              <span className={`inline-block h-5 w-5 transform rounded-full bg-white transition shadow-sm ${isRestrictedMode ? 'translate-x-6' : 'translate-x-1'}`} />
-                          </button>
+                          <button onClick={() => setIsRestrictedMode(!isRestrictedMode)} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${isRestrictedMode ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-600'}`}><span className={`inline-block h-5 w-5 transform rounded-full bg-white transition shadow-sm ${isRestrictedMode ? 'translate-x-6' : 'translate-x-1'}`} /></button>
                       </div>
 
                       {isRestrictedMode && (
                           <div className="space-y-4 animate-fadeIn">
                               <div className="flex items-center justify-between">
-                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">Select Allowed Locations</label>
+                                 <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Select Allowed Locations</label>
                                  <div className="space-x-3 text-xs font-medium">
-                                      <button 
-                                          onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), true)}
-                                          className="text-blue-600 hover:underline"
-                                      >
-                                          Select All
-                                      </button>
-                                      <button 
-                                          onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), false)}
-                                          className="text-slate-500 hover:underline"
-                                      >
-                                          Clear
-                                      </button>
+                                      <button onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), true)} className="text-blue-600 dark:text-blue-400 hover:underline">Select All</button>
+                                      <button onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), false)} className="text-slate-500 dark:text-slate-400 hover:underline">Clear</button>
                                   </div>
                               </div>
                               
                               <div className="relative">
                                   <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
-                                  <input 
-                                      type="text" 
-                                      placeholder="Search locations..." 
-                                      value={permSearch}
-                                      onChange={(e) => setPermSearch(e.target.value)}
-                                      className="w-full pl-9 pr-3 py-2 bg-white border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm"
-                                  />
+                                  <input type="text" placeholder="Search locations..." value={permSearch} onChange={(e) => setPermSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
                               </div>
 
-                              <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm max-h-72 overflow-y-auto divide-y divide-slate-100">
-                                  {data.locations
-                                      .filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase()))
-                                      .map(loc => {
-                                      const isSelected = selectedAllowedLocationIds.has(loc.id);
-                                      return (
-                                      <div 
-                                        key={loc.id} 
-                                        onClick={() => toggleAllowedLocation(loc.id)}
-                                        className={`flex items-center px-4 py-3 cursor-pointer transition hover:bg-slate-50 ${isSelected ? 'bg-blue-50/30' : ''}`}
-                                      >
-                                          <div className={`flex-shrink-0 mr-3 transition-colors ${isSelected ? 'text-blue-600' : 'text-slate-300'}`}>
-                                               {isSelected ? <CheckSquare size={20} /> : <Square size={20} />}
-                                          </div>
+                              <div className="bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-sm max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
+                                  {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(loc => { const isSelected = selectedAllowedLocationIds.has(loc.id); return (
+                                      <div key={loc.id} onClick={() => toggleAllowedLocation(loc.id)} className={`flex items-center px-4 py-3 cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700 ${isSelected ? 'bg-blue-50/30 dark:bg-blue-900/20' : ''}`}>
+                                          <div className={`flex-shrink-0 mr-3 transition-colors ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-500'}`}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div>
                                           <div className="flex-1 min-w-0">
-                                              <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900' : 'text-slate-700'}`}>{loc.name}</div>
-                                              <div className="flex items-center gap-1.5 mt-0.5">
-                                                  {loc.type === LocationType.HOTEL ? (
-                                                      <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">Hotel</span>
-                                                  ) : (
-                                                      <span className="text-[10px] bg-indigo-50 text-indigo-600 px-1.5 py-0.5 rounded border border-indigo-100">Worksite</span>
-                                                  )}
-                                              </div>
+                                              <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900 dark:text-blue-200' : 'text-slate-700 dark:text-slate-300'}`}>{loc.name}</div>
+                                              <div className="flex items-center gap-1.5 mt-0.5">{loc.type === LocationType.HOTEL ? <span className="text-[10px] bg-slate-100 dark:bg-slate-600 text-slate-500 dark:text-slate-300 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-500">Hotel</span> : <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800/50">Worksite</span>}</div>
                                           </div>
                                       </div>
                                   )})}
-                                  {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).length === 0 && (
-                                      <div className="p-8 text-center text-slate-400 text-sm">No locations found.</div>
-                                  )}
+                                  {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).length === 0 && <div className="p-8 text-center text-slate-400 text-sm">No locations found.</div>}
                               </div>
                           </div>
                       )}
                   </div>
                   
-                  <div className="p-6 border-t border-slate-200 bg-white flex justify-end space-x-3 rounded-b-xl">
-                      <button 
-                          onClick={closePermissionsModal}
-                          className="px-5 py-2.5 rounded-xl text-slate-600 font-medium hover:bg-slate-50 border border-transparent hover:border-slate-200 transition"
-                      >
-                          Cancel
-                      </button>
-                      <button 
-                          onClick={savePermissions}
-                          className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98]"
-                      >
-                          Save Changes
-                      </button>
+                  <div className="p-6 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex justify-end space-x-3 rounded-b-xl">
+                      <button onClick={closePermissionsModal} className="px-5 py-2.5 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition">Cancel</button>
+                      <button onClick={savePermissions} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98]">Save Changes</button>
                   </div>
               </div>
           </div>
       )}
 
-      {/* Edit Log Modal */}
       {editingLog && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col animate-fadeIn">
-                  <div className="p-6 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+              <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg flex flex-col animate-fadeIn">
+                  <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
                       <div>
-                        <h3 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                            <Edit2 size={20} className="text-blue-600" />
-                            Edit Trip Log
-                        </h3>
-                        <p className="text-sm text-slate-500 mt-1">ID: {editingLog.id}</p>
+                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><Edit2 size={20} className="text-blue-600 dark:text-blue-400" /> Edit Trip Log</h3>
+                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">ID: {editingLog.id}</p>
                       </div>
-                      <button onClick={() => setEditingLog(null)} className="p-2 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-500 transition">
-                          <X size={20} />
-                      </button>
+                      <button onClick={() => setEditingLog(null)} className="p-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full text-slate-500 dark:text-slate-400 transition"><X size={20} /></button>
                   </div>
                   
                   <div className="p-6 overflow-y-auto space-y-4">
-                      <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Driver Name</label>
-                          <input 
-                              type="text" 
-                              value={editLogDriver} 
-                              onChange={e => setEditLogDriver(e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Company</label>
-                          <input 
-                              type="text" 
-                              value={editLogCompany} 
-                              onChange={e => setEditLogCompany(e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                          <div>
-                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Bus Number</label>
-                              <input 
-                                  type="text" 
-                                  value={editLogBusNo} 
-                                  onChange={e => setEditLogBusNo(e.target.value)}
-                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                              />
+                      {['Driver Name', 'Company', 'Bus Number', 'Passengers', 'Departure Time'].map(label => {
+                          const key = label.toLowerCase().replace(' ', '_');
+                          const valueMap: any = { driver_name: editLogDriver, company: editLogCompany, bus_number: editLogBusNo, passengers: editLogPax, departure_time: editLogTime };
+                          const setterMap: any = { driver_name: setEditLogDriver, company: setEditLogCompany, bus_number: setEditLogBusNo, passengers: setEditLogPax, departure_time: setEditLogTime };
+                          const type = key.includes('time') ? 'datetime-local' : (key === 'passengers' ? 'number' : 'text');
+                          return (
+                          <div key={key}>
+                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">{label}</label>
+                              <input type={type} value={valueMap[key]} onChange={e => setterMap[key](type === 'number' ? parseInt(e.target.value) : e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white dark:bg-slate-700" />
                           </div>
-                          <div>
-                              <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Passengers</label>
-                              <input 
-                                  type="number" 
-                                  value={editLogPax} 
-                                  onChange={e => setEditLogPax(parseInt(e.target.value))}
-                                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                              />
-                          </div>
-                      </div>
-                      <div>
-                          <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Departure Time</label>
-                          <input 
-                              type="datetime-local" 
-                              value={editLogTime} 
-                              onChange={e => setEditLogTime(e.target.value)}
-                              className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
-                          />
-                      </div>
+                      )})}
                   </div>
                   
-                  <div className="p-6 border-t border-slate-200 bg-white flex justify-end space-x-3 rounded-b-xl">
-                      <button 
-                          onClick={() => setEditingLog(null)}
-                          className="px-5 py-2.5 rounded-xl text-slate-600 font-medium hover:bg-slate-50 border border-transparent hover:border-slate-200 transition"
-                      >
-                          Cancel
-                      </button>
-                      <button 
-                          onClick={saveLogEdit}
-                          className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98] flex items-center gap-2"
-                      >
-                          <Save size={16} /> Save Changes
-                      </button>
+                  <div className="p-6 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex justify-end space-x-3 rounded-b-xl">
+                      <button onClick={() => setEditingLog(null)} className="px-5 py-2.5 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition">Cancel</button>
+                      <button onClick={saveLogEdit} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98] flex items-center gap-2"><Save size={16} /> Save Changes</button>
                   </div>
               </div>
           </div>

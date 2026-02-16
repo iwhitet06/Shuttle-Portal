@@ -71,7 +71,6 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
               newArray = [...currentArray, id];
           }
           onChange(newArray);
-          // Don't close on selection for multi-select
       } else {
           onChange(id);
           setIsOpen(false);
@@ -82,22 +81,22 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
     <div className="relative w-full" ref={wrapperRef}>
       <div 
         onClick={() => { setIsOpen(!isOpen); setSearch(''); }}
-        className={`w-full bg-white border transition group cursor-pointer flex items-center justify-between ${
+        className={`w-full bg-white dark:bg-slate-700/50 border dark:border-slate-600 transition group cursor-pointer flex items-center justify-between ${
             compact 
-            ? 'px-3 py-2 border-slate-300 rounded-lg hover:border-blue-400' 
-            : 'pl-10 pr-4 py-3 bg-slate-50 border-slate-200 rounded-xl hover:bg-white hover:border-blue-300'
+            ? 'px-3 py-2 border-slate-300 rounded-lg hover:border-blue-400 dark:hover:border-blue-500' 
+            : 'pl-10 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700 rounded-xl hover:bg-white dark:hover:bg-slate-700 hover:border-blue-300 dark:hover:border-blue-600'
         }`}
       >
-        {icon && !compact && <div className="absolute left-3 text-slate-400 group-hover:text-blue-500 transition">{icon}</div>}
-        <span className={`truncate mr-2 ${compact ? 'text-sm' : 'text-sm font-medium'} ${isValueSelected ? 'text-slate-900' : 'text-slate-500'}`}>
+        {icon && !compact && <div className="absolute left-3 text-slate-400 dark:text-slate-500 group-hover:text-blue-500 transition">{icon}</div>}
+        <span className={`truncate mr-2 ${compact ? 'text-sm' : 'text-sm font-medium'} ${isValueSelected ? 'text-slate-900 dark:text-slate-50' : 'text-slate-500 dark:text-slate-400'}`}>
           {displayText}
         </span>
-        <ChevronDown size={16} className="text-slate-400 flex-shrink-0" />
+        <ChevronDown size={16} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-xl border border-slate-200 z-50 overflow-hidden max-h-60 flex flex-col animate-fadeIn">
-          <div className="p-2 border-b border-slate-100 sticky top-0 bg-white" onClick={(e) => e.stopPropagation()}>
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden max-h-60 flex flex-col animate-fadeIn">
+          <div className="p-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800" onClick={(e) => e.stopPropagation()}>
             <div className="relative">
               <Search className="absolute left-2 top-2.5 text-slate-400 w-3 h-3" />
               <input
@@ -106,7 +105,7 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-md text-xs outline-none focus:border-blue-500 text-slate-800"
+                className="w-full pl-7 pr-3 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-xs outline-none focus:border-blue-500 text-slate-800 dark:text-slate-200"
               />
             </div>
           </div>
@@ -125,12 +124,15 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                 <div
                   key={opt.id}
                   onClick={(e) => handleSelect(opt.id, e)}
-                  className={`px-3 py-2 text-sm rounded-md cursor-pointer transition flex items-center justify-between ${isSelected && !multiple ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700 hover:bg-slate-50'}`}
+                  className={`px-3 py-2 text-sm rounded-md cursor-pointer transition flex items-center justify-between ${
+                    isSelected && !multiple 
+                    ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-medium' 
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                  }`}
                 >
                   <span className="truncate">{opt.name}</span>
-                  
                   {multiple ? (
-                      <div className={`ml-2 ${isSelected ? 'text-blue-600' : 'text-slate-300'}`}>
+                      <div className={`ml-2 ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-500'}`}>
                           {isSelected ? <CheckSquare size={16} /> : <Square size={16} />}
                       </div>
                   ) : (

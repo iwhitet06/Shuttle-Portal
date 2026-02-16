@@ -17,16 +17,11 @@ const getEnvVar = (key: string, fallback: string = '') => {
 const supabaseUrl = getEnvVar('VITE_SUPABASE_URL', 'https://onuihnhwiozeyphrfofk.supabase.co');
 const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9udWlobmh3aW96ZXlwaHJmb2ZrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzExODM4MTgsImV4cCI6MjA4Njc1OTgxOH0.mu9ivIid8ZBZnCHabFswkVYPksk15Nldkjd135Ec0eU');
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("Missing Supabase Environment Variables");
-}
-
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- HELPER FUNCTIONS ---
 
 const mapUser = (data: any): User => {
-  // SECURITY OVERRIDE: 000-000-0000 is ALWAYS System Admin
   if (data.phone === '000-000-0000') {
     return {
       id: data.id,
@@ -35,19 +30,16 @@ const mapUser = (data: any): User => {
       phone: data.phone,
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
-      permissions: { canViewHistory: true, canLogTrips: true, allowedLocationIds: undefined }, // Full access
+      permissions: { canViewHistory: true, canLogTrips: true, allowedLocationIds: undefined },
       joinedAt: data.joined_at,
       currentLocationId: data.current_location_id,
       assignedWorksiteIds: data.assigned_worksite_ids || (data.assigned_worksite_id ? [data.assigned_worksite_id] : [])
     };
   }
 
-  // Normalize Role to uppercase to match Enum
   let normalizedRole = UserRole.AGENT;
   const dbRole = (data.role || '').toUpperCase();
-  
   if (dbRole === 'ADMIN') normalizedRole = UserRole.ADMIN;
-  else normalizedRole = UserRole.AGENT; // Default fallback for any legacy or unknown roles
 
   return {
     id: data.id,
@@ -138,7 +130,6 @@ export const loadData = async (): Promise<AppData> => {
 
 export const registerUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
   const isSystemAdmin = phone === '000-000-0000';
-  
   const newUser = {
     first_name: firstName,
     last_name: lastName,
@@ -148,7 +139,7 @@ export const registerUser = async (firstName: string, lastName: string, phone: s
     permissions: { canViewHistory: true, canLogTrips: true }
   };
   const { data, error } = await supabase.from('users').insert([newUser]).select().single();
-  if (error) { console.error(error); return null; }
+  if (error) return null;
   return mapUser(data);
 };
 
@@ -186,7 +177,6 @@ export const updateLog = async (logId: string, updates: Partial<LogEntry>) => {
   if (updates.timestamp) dbUpdates.timestamp = updates.timestamp;
   if (updates.status) dbUpdates.status = updates.status;
   if (updates.eta) dbUpdates.eta = updates.eta;
-  
   await supabase.from('logs').update(dbUpdates).eq('id', logId);
 };
 
@@ -219,19 +209,8 @@ export const markTripArrived = async (logId: string) => {
 };
 
 export const sendMessage = async (fromId: string, toIdOrGroupId: string, content: string, isGroup: boolean = false) => {
-  const payload: any = {
-    from_user_id: fromId,
-    content,
-    timestamp: new Date().toISOString(),
-    is_read: false
-  };
-  
-  if (isGroup) {
-      payload.group_id = toIdOrGroupId;
-  } else {
-      payload.to_user_id = toIdOrGroupId;
-  }
-
+  const payload: any = { from_user_id: fromId, content, timestamp: new Date().toISOString(), is_read: false };
+  if (isGroup) payload.group_id = toIdOrGroupId; else payload.to_user_id = toIdOrGroupId;
   await supabase.from('messages').insert([payload]);
 };
 
@@ -247,18 +226,22 @@ export const updateUserRole = async (userId: string, role: UserRole) => {
   await supabase.from('users').update({ role }).eq('id', userId);
 };
 
-// Deprecated toggle, keep for compatibility but prefer updateUserRole
-export const toggleUserRole = async (userId: string) => {
-  // Fetch current role
-  const { data } = await supabase.from('users').select('role').eq('id', userId).single();
-  if (data) {
-    let newRole = UserRole.AGENT;
-    // Simple toggle logic since we only have ADMIN and AGENT now
-    if (data.role === UserRole.AGENT || data.role === 'ONSITE_COORDINATOR') newRole = UserRole.ADMIN;
-    else newRole = UserRole.AGENT; 
-    
-    await supabase.from('users').update({ role: newRole }).eq('id', userId);
-  }
+export const updateUserProfile = async (userId: string, updates: { currentLocationId?: string, assignedWorksiteIds?: string[] }) => {
+  const dbUpdates: any = {};
+  if (updates.currentLocationId !== undefined) dbUpdates.current_location_id = updates.currentLocationId;
+  if (updates.assignedWorksiteIds !== undefined) dbUpdates.assigned_worksite_ids = updates.assignedWorksiteIds;
+  
+  const { error } = await supabase.from('users').update(dbUpdates).eq('id', userId);
+  if (error) throw error;
+};
+
+// Kept for backward compatibility
+export const updateUserLocation = async (userId: string, locationId: string) => {
+  await updateUserProfile(userId, { currentLocationId: locationId });
+};
+
+export const updateUserAssignedWorksite = async (userId: string, worksiteIds: string[]) => {
+  await updateUserProfile(userId, { assignedWorksiteIds: worksiteIds });
 };
 
 export const toggleUserPermission = async (userId: string, permission: keyof UserPermissions) => {
@@ -277,15 +260,6 @@ export const updateUserAllowedLocations = async (userId: string, locationIds: st
         const perms = data.permissions as UserPermissions;
         await supabase.from('users').update({ permissions: { ...perms, allowedLocationIds: locationIds } }).eq('id', userId);
     }
-};
-
-export const updateUserLocation = async (userId: string, locationId: string) => {
-  await supabase.from('users').update({ current_location_id: locationId }).eq('id', userId);
-};
-
-export const updateUserAssignedWorksite = async (userId: string, worksiteIds: string[]) => {
-  // Update the new array column. 
-  await supabase.from('users').update({ assigned_worksite_ids: worksiteIds }).eq('id', userId);
 };
 
 export const toggleLocation = async (locationId: string) => {
@@ -309,49 +283,27 @@ export const updateLocation = async (id: string, updates: Partial<Location>) => 
 };
 
 export const createGroup = async (name: string, creatorId: string, memberIds: string[]): Promise<Group> => {
-    // Ensure creator is in members
     const finalMembers = Array.from(new Set([...memberIds, creatorId]));
-    
-    const { data, error } = await supabase.from('groups').insert([{
-        name,
-        created_by: creatorId,
-        member_ids: finalMembers
-    }]).select().single();
-    
+    const { data, error } = await supabase.from('groups').insert([{ name, created_by: creatorId, member_ids: finalMembers }]).select().single();
     if (error) throw error;
     return mapGroup(data);
 };
 
-// --- DAILY CLEANUP LOGIC ---
 export const cleanupStaleTrips = async () => {
-  // 1. Fetch active trips
-  const { data: activeTrips, error } = await supabase
-    .from('logs')
-    .select('*')
-    .eq('status', TripStatus.IN_TRANSIT);
-
+  const { data: activeTrips, error } = await supabase.from('logs').select('*').eq('status', TripStatus.IN_TRANSIT);
   if (error || !activeTrips || activeTrips.length === 0) return;
-
-  // 2. Calculate Midnight PST for Today
-  // This ensures we check against the start of the current day in the specific timezone
   const pstNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
   const pstTodayMidnight = new Date(pstNow);
   pstTodayMidnight.setHours(0, 0, 0, 0);
-
-  // 3. Process updates
   const updates = activeTrips.map(async (trip) => {
-    // Convert the trip timestamp (UTC/ISO) to PST
     const tripTimePST = new Date(new Date(trip.timestamp).toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
-    
-    // If the trip happened before midnight today (PST), it belongs to a previous day
     if (tripTimePST < pstTodayMidnight) {
        await supabase.from('logs').update({ 
            status: TripStatus.ARRIVED,
-           actual_arrival_time: new Date().toISOString(), // Auto-close timestamp
+           actual_arrival_time: new Date().toISOString(),
            notes: trip.notes ? trip.notes + " [Auto-closed]" : "[Auto-closed]"
        }).eq('id', trip.id);
     }
   });
-
   await Promise.all(updates);
 };

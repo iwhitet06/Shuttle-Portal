@@ -1,24 +1,20 @@
-// This service has been disabled to remove the dependency on Google GenAI.
-// To re-enable, install @google/genai and uncomment the code below.
 
+// This service re-enables the dependency on Google GenAI following official guidelines.
+import { GoogleGenAI } from "@google/genai";
 import { LogEntry, Location } from "../types";
 
+/**
+ * Uses Gemini AI to analyze recent trip logs and provide operational insights.
+ */
 export const analyzeLogs = async (logs: LogEntry[], locations: Location[]) => {
-  return "AI Analysis is currently disabled.";
-};
-
-/*
-import { GoogleGenAI } from "@google/genai";
-
-const getClient = () => {
+  // Obtain API key exclusively from process.env.API_KEY
   const apiKey = process.env.API_KEY;
-  if (!apiKey) return null;
-  return new GoogleGenAI({ apiKey });
-};
+  if (!apiKey) {
+    return "API Key not configured. Daily analysis is unavailable.";
+  }
 
-export const analyzeLogs = async (logs: LogEntry[], locations: Location[]) => {
-  const ai = getClient();
-  if (!ai) return "API Key not configured.";
+  // Always use { apiKey: process.env.API_KEY } for initialization
+  const ai = new GoogleGenAI({ apiKey });
 
   // Format data for the model to digest easily
   const recentLogs = logs.slice(-50); // Analyze last 50 logs to avoid token limits in this demo
@@ -48,14 +44,16 @@ export const analyzeLogs = async (logs: LogEntry[], locations: Location[]) => {
   `;
 
   try {
+    // Calling generateContent with the model name directly
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
       contents: prompt,
     });
-    return response.text;
+    
+    // Accessing .text property directly (not as a method)
+    return response.text || "No insights available from the current data.";
   } catch (error) {
     console.error("Gemini Error:", error);
-    return "Unable to generate analysis at this time. Please check API configuration.";
+    return "Unable to generate analysis at this time. Please check your system configuration.";
   }
 };
-*/

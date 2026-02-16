@@ -109,7 +109,7 @@ const mapGroup = (data: any): Group => ({
 
 export const loadData = async (): Promise<AppData> => {
   const [users, locations, logs, checkins, messages, groups] = await Promise.all([
-    supabase.from('users').select('*'),
+    supabase.from('users').select('*').order('last_name', { ascending: true }),
     supabase.from('locations').select('*').order('name'),
     supabase.from('logs').select('*').order('timestamp', { ascending: false }),
     supabase.from('bus_checkins').select('*').order('timestamp', { ascending: false }),
@@ -181,7 +181,9 @@ export const updateLog = async (logId: string, updates: Partial<LogEntry>) => {
 };
 
 export const deleteLog = async (logId: string) => {
-  await supabase.from('logs').delete().eq('id', logId);
+  const { error } = await supabase.from('logs').delete().eq('id', logId);
+  if (error) throw error;
+  return true;
 };
 
 export const createBusCheckIn = async (entry: Omit<BusCheckIn, 'id' | 'timestamp'>) => {
@@ -201,7 +203,9 @@ export const updateBusCheckIn = async (id: string, timestamp: string) => {
 };
 
 export const deleteBusCheckIn = async (id: string) => {
-  await supabase.from('bus_checkins').delete().eq('id', id);
+  const { error } = await supabase.from('bus_checkins').delete().eq('id', id);
+  if (error) throw error;
+  return true;
 };
 
 export const markTripArrived = async (logId: string) => {
@@ -226,13 +230,31 @@ export const updateUserRole = async (userId: string, role: UserRole) => {
   await supabase.from('users').update({ role }).eq('id', userId);
 };
 
-export const updateUserProfile = async (userId: string, updates: { currentLocationId?: string, assignedWorksiteIds?: string[] }) => {
+export const updateUserProfile = async (userId: string, updates: { currentLocationId?: string | null, assignedWorksiteIds?: string[] }) => {
   const dbUpdates: any = {};
-  if (updates.currentLocationId !== undefined) dbUpdates.current_location_id = updates.currentLocationId;
-  if (updates.assignedWorksiteIds !== undefined) dbUpdates.assigned_worksite_ids = updates.assignedWorksiteIds;
+  if (updates.currentLocationId !== undefined) {
+      dbUpdates.current_location_id = updates.currentLocationId;
+  }
   
-  const { error } = await supabase.from('users').update(dbUpdates).eq('id', userId);
-  if (error) throw error;
+  if (updates.assignedWorksiteIds !== undefined) {
+      dbUpdates.assigned_worksite_ids = updates.assignedWorksiteIds;
+      dbUpdates.assigned_worksite_id = (updates.assignedWorksiteIds && updates.assignedWorksiteIds.length > 0) ? updates.assignedWorksiteIds[0] : null;
+  }
+  
+  try {
+      const { error } = await supabase.from('users').update(dbUpdates).eq('id', userId);
+      if (error) throw error;
+  } catch (err: any) {
+      // Fallback for older schemas without assigned_worksite_ids array
+      if (updates.assignedWorksiteIds !== undefined && (err.message?.includes('assigned_worksite_ids') || err.code === '42703')) {
+          delete dbUpdates.assigned_worksite_ids;
+          dbUpdates.assigned_worksite_id = (updates.assignedWorksiteIds && updates.assignedWorksiteIds.length > 0) ? updates.assignedWorksiteIds[0] : null;
+          const { error: legacyError } = await supabase.from('users').update(dbUpdates).eq('id', userId);
+          if (legacyError) throw legacyError;
+      } else {
+          throw err;
+      }
+  }
 };
 
 // Kept for backward compatibility

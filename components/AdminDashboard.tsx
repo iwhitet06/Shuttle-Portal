@@ -1,6 +1,7 @@
+
 import React, { useState } from 'react';
-import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry } from '../types';
-import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog, deleteBusCheckIn } from '../services/supabaseService';
+import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry, UserPermissions } from '../types';
+import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog, deleteBusCheckIn, updateUserProfile } from '../services/supabaseService';
 import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2, ShieldCheck, CheckSquare, Square, Briefcase } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
 import { SearchableDropdown } from './SearchableDropdown';
@@ -12,6 +13,204 @@ interface AdminDashboardProps {
   theme: 'light' | 'dark';
 }
 
+// --- SUB-COMPONENTS (Defined outside to prevent remounting on refresh) ---
+
+interface UserTableProps {
+  users: User[];
+  title: string;
+  isRevoked?: boolean;
+  data: AppData;
+  refreshData: () => void;
+  onUpdateStation: (userId: string, locId: string | null) => void;
+  onUpdateTargets: (userId: string, val: any) => void;
+  onOpenPermissions: (user: User) => void;
+  onAction: (action: () => Promise<void>) => void;
+}
+
+const UserTable: React.FC<UserTableProps> = ({ 
+  users, title, isRevoked = false, data, refreshData, onUpdateStation, onUpdateTargets, onOpenPermissions, onAction 
+}) => {
+  const isSystemAdminUser = (user: User) => user.phone === '000-000-0000';
+  const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
+
+  return (
+    <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border overflow-hidden ${isRevoked ? 'border-red-100 dark:border-red-800/50 mt-8' : 'border-slate-200 dark:border-slate-700'}`}>
+      <div className={`p-4 border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/50 text-red-800 dark:text-red-300' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'}`}>
+          <h3 className="font-bold flex items-center gap-2">
+            {isRevoked ? <ShieldAlert size={18} /> : <UserIcon size={18} />}
+            {title} ({users.length})
+          </h3>
+      </div>
+      <div className="overflow-x-auto min-h-[300px]">
+        <table className="w-full text-left text-sm">
+          <thead className={`font-medium border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-300 border-red-100 dark:border-red-800/50' : 'bg-slate-50 dark:bg-slate-700/30 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}>
+            <tr>
+              <th className="p-4 w-64">User Details</th>
+              <th className="p-4">Contact</th>
+              <th className="p-4 w-64">Assignments</th>
+              <th className="p-4">Role</th>
+              <th className="p-4">Status</th>
+              <th className="p-4">Permissions</th>
+              <th className="p-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
+            {users.map(user => {
+                const isSysAdmin = isSystemAdminUser(user);
+                return (
+              <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
+                <td className="p-4 align-top">
+                   <div className="font-medium text-slate-800 dark:text-slate-100">
+                        {user.firstName} {user.lastName}
+                        {isSysAdmin && <span className="ml-2 text-[10px] bg-yellow-100 dark:bg-yellow-800/50 text-yellow-800 dark:text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-200 dark:border-yellow-700/50 uppercase tracking-wide">SysAdmin</span>}
+                   </div>
+                   <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mt-0.5">ID: {user.id}</div>
+                </td>
+                <td className="p-4 align-top text-slate-500 dark:text-slate-400 font-mono">{user.phone}</td>
+                <td className="p-4 align-top">
+                    <div className="space-y-3">
+                        <div className="flex items-start gap-2">
+                            <MapPin size={14} className="text-slate-400 mt-2 flex-shrink-0" />
+                            <div className="flex-1">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-1">Station</span>
+                                <div className="flex items-center gap-1 w-full max-w-[200px]">
+                                    <div className="flex-1">
+                                        <SearchableDropdown 
+                                            options={data.locations.filter(l => l.isActive)} 
+                                            value={user.currentLocationId || ''} 
+                                            onChange={(val) => onUpdateStation(user.id, val)} 
+                                            placeholder="Set Station" 
+                                            compact={true} 
+                                        />
+                                    </div>
+                                    {user.currentLocationId && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onUpdateStation(user.id, null); }} 
+                                            className="p-2 rounded-lg bg-slate-100 hover:bg-red-100 dark:bg-slate-700 dark:hover:bg-red-900/40 text-slate-400 hover:text-red-600 transition flex-shrink-0"
+                                            title="Clear Station"
+                                        >
+                                            <X size={14} strokeWidth={3} />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex items-start gap-2">
+                            <Briefcase size={14} className="text-slate-400 mt-2 flex-shrink-0" />
+                            <div className="flex-1">
+                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-1">Targets</span>
+                                <div className="flex items-center gap-1 w-full max-w-[200px]">
+                                    <div className="flex-1">
+                                        <SearchableDropdown 
+                                            options={data.locations.filter(l => l.isActive && l.type === LocationType.WORKSITE)} 
+                                            value={user.assignedWorksiteIds || []} 
+                                            onChange={(val) => onUpdateTargets(user.id, val)} 
+                                            placeholder="Set Targets" 
+                                            compact={true} 
+                                            multiple={true}
+                                        />
+                                    </div>
+                                    {user.assignedWorksiteIds && user.assignedWorksiteIds.length > 0 && (
+                                        <button 
+                                            onClick={(e) => { e.stopPropagation(); onUpdateTargets(user.id, []); }} 
+                                            className="p-2 rounded-lg bg-slate-100 hover:bg-red-100 dark:bg-slate-700 dark:hover:bg-red-900/40 text-slate-400 hover:text-red-600 transition flex-shrink-0"
+                                            title="Clear Targets"
+                                        >
+                                            <X size={14} strokeWidth={3} />
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </td>
+                <td className="p-4 align-top">
+                    <div className="relative w-32">
+                        <select 
+                            value={user.role}
+                            disabled={isSysAdmin}
+                            onChange={async (e) => { await updateUserRole(user.id, e.target.value as UserRole); refreshData(); }}
+                            className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
+                                user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800/50 focus:ring-purple-500' :
+                                'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 focus:ring-slate-500'
+                            }`}
+                        >
+                            <option value={UserRole.AGENT}>AGENT</option>
+                            <option value={UserRole.ADMIN}>ADMIN</option>
+                        </select>
+                        {!isSysAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>}
+                    </div>
+                </td>
+                <td className="p-4 align-top">
+                  <span className={`px-2 py-1 rounded text-xs font-bold ${
+                    user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' :
+                    user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' :
+                    'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
+                  }`}>
+                    {user.status}
+                  </span>
+                </td>
+                <td className="p-4 align-top">
+                   <div className="flex items-center gap-2">
+                    <button 
+                        onClick={() => onAction(() => toggleUserPermission(user.id, 'canViewHistory'))}
+                        className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/50' : 'text-slate-400 bg-slate-100 dark:bg-slate-700'}`}
+                        title="Toggle View History"
+                    >
+                        {user.permissions.canViewHistory ? <Eye size={16} /> : <EyeOff size={16} />}
+                    </button>
+                    <button
+                        onClick={() => onOpenPermissions(user)}
+                        className={`p-1.5 rounded transition flex items-center gap-1 text-xs font-bold px-2 ${
+                            user.permissions.allowedLocationIds ? 'text-orange-600 bg-orange-50 dark:bg-orange-900/50 border border-orange-200 dark:border-orange-800/50' : 'text-slate-600 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600'
+                        }`}
+                        title="Manage Location Access"
+                    >
+                        <Lock size={14} />
+                        {user.permissions.allowedLocationIds ? `${user.permissions.allowedLocationIds.length}` : 'All'}
+                    </button>
+                   </div>
+                </td>
+                <td className="p-4 align-top text-right">
+                  <div className="flex justify-end gap-1">
+                    {!isSysAdmin && (
+                        <>
+                        {user.status === UserStatus.PENDING && (
+                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 dark:bg-green-900/50 dark:hover:bg-green-900 dark:text-green-300 p-2 rounded" title="Approve">
+                            <CheckCircle size={16} />
+                        </button>
+                        )}
+                        
+                        {user.status !== UserStatus.REVOKED && (
+                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-900 dark:text-red-300 p-2 rounded" title="Revoke Access">
+                            <XCircle size={16} />
+                        </button>
+                        )}
+
+                        {user.status === UserStatus.REVOKED && (
+                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200 p-2 rounded" title="Restore Access">
+                            <CheckCircle size={16} />
+                        </button>
+                        )}
+                        </>
+                    )}
+                    {isSysAdmin && (
+                        <span className="text-slate-400 dark:text-slate-500 text-xs italic flex items-center gap-1"><ShieldCheck size={14}/> Protected</span>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            )})}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+};
+
+// --- MAIN COMPONENT ---
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshData, currentUser, theme }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'checkins' | 'users' | 'locations'>('overview');
 
@@ -22,16 +221,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const [dateFilter, setDateFilter] = useState('');
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
 
-  // Check-in Filtering
-  const [checkInSearch, setCheckInSearch] = useState('');
-  const [checkInLocationFilter, setCheckInLocationFilter] = useState('ALL');
-  const [checkInDateFilter, setCheckInDateFilter] = useState('');
-
   // User Filtering
   const [userSearch, setUserSearch] = useState('');
   const [userRoleFilter, setUserRoleFilter] = useState<'ALL' | UserRole>('ALL');
   const [userStatusFilter, setUserStatusFilter] = useState<'ALL' | UserStatus>('ALL');
   const [userLocationFilter, setUserLocationFilter] = useState<string>('ALL');
+
+  // Check-in Filtering
+  // Added missing state variables for fleet check-ins filtering
+  const [checkInSearch, setCheckInSearch] = useState('');
+  const [checkInLocationFilter, setCheckInLocationFilter] = useState('ALL');
+  const [checkInDateFilter, setCheckInDateFilter] = useState('');
 
   // Location Form
   const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
@@ -137,13 +337,25 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
 
   const handleDeleteLog = async (logId: string, e: React.MouseEvent) => {
       e.stopPropagation();
-      if(window.confirm('Are you sure you want to delete this log?')) { await deleteLog(logId); refreshData(); }
+      if(window.confirm('Are you sure you want to delete this log?')) { 
+          try {
+            await deleteLog(logId); 
+            refreshData(); 
+          } catch (err) {
+            console.error("Delete log failed", err);
+          }
+      }
   };
 
-  const handleDeleteCheckIn = async (id: string) => {
+  const handleDeleteCheckIn = async (id: string, e: React.MouseEvent) => {
+      e.stopPropagation();
       if(window.confirm('Delete this check-in record?')) {
-          await deleteBusCheckIn(id);
-          refreshData();
+          try {
+            await deleteBusCheckIn(id);
+            refreshData();
+          } catch (err) {
+            console.error("Delete check-in failed", err);
+          }
       }
   };
 
@@ -196,6 +408,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
   const activeUsers = filteredUsers.filter(u => u.status !== UserStatus.REVOKED);
   const revokedUsers = filteredUsers.filter(u => u.status === UserStatus.REVOKED);
 
+  // Added logic using the missing state variables
   const filteredCheckIns = (data.busCheckIns || []).filter(c => {
       const searchContent = `${c.driverName} ${c.companyName} ${c.busNumber}`.toLowerCase();
       return (!checkInSearch || searchContent.includes(checkInSearch.toLowerCase())) &&
@@ -207,8 +420,16 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
       alert("Exporting CSV..."); 
   };
 
-  const isSystemAdminUser = (user: User) => {
-      return user.phone === '000-000-0000';
+  const handleUpdateStation = async (userId: string, locId: string | null) => {
+      // Pass null directly to clear assignment
+      await updateUserProfile(userId, { currentLocationId: locId });
+      refreshData();
+  };
+
+  const handleUpdateTargets = async (userId: string, val: any) => {
+      const newIds = Array.isArray(val) ? val : [val];
+      await updateUserProfile(userId, { assignedWorksiteIds: newIds });
+      refreshData();
   };
 
   const renderLogs = () => (
@@ -234,7 +455,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
               <th className="p-4">Transport</th>
               <th className="p-4 text-center">Pax</th>
               <th className="p-4">Timing</th>
-              <th className="p-4">Actions</th>
+              <th className="p-4 text-right">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
@@ -247,12 +468,12 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                     <td className="p-4 text-slate-400 dark:text-slate-500">
                         {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 whitespace-nowrap">
                         <span className={`px-2 py-1 rounded text-xs font-bold ${log.status === TripStatus.IN_TRANSIT ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : 'bg-slate-100 dark:bg-slate-700 dark:text-slate-300'}`}>
                             {log.status === TripStatus.IN_TRANSIT ? 'In Transit' : 'Arrived'}
                         </span>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 whitespace-nowrap">
                       <div className="font-bold">{formatTime(log.timestamp)}</div>
                       <div className="text-xs text-slate-400 dark:text-slate-500">{new Date(log.timestamp).toLocaleDateString()}</div>
                     </td>
@@ -265,7 +486,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                       <div className="text-xs text-slate-600 dark:text-slate-400">Bus {log.busNumber} • {log.driverName}</div>
                     </td>
                     <td className="p-4 font-bold text-center">{log.passengerCount}</td>
-                    <td className="p-4">
+                    <td className="p-4 whitespace-nowrap">
                         <div className="space-y-1">
                             {log.status === TripStatus.ARRIVED && log.actualArrivalTime ? (
                                 <div className="text-xs">
@@ -281,11 +502,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                             )}
                         </div>
                     </td>
-                    <td className="p-4">
+                    <td className="p-4 text-right">
                         {isFullAdmin && (
-                            <div className="flex gap-2">
-                                <button onClick={(e) => openEditLogModal(log, e)} className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 p-1 rounded" title="Edit"><Edit2 size={16}/></button>
-                                <button onClick={(e) => handleDeleteLog(log.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-slate-700 p-1 rounded" title="Delete"><Trash2 size={16}/></button>
+                            <div className="flex justify-end gap-1">
+                                <button onClick={(e) => openEditLogModal(log, e)} className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 p-2 rounded transition" title="Edit"><Edit2 size={18}/></button>
+                                <button onClick={(e) => handleDeleteLog(log.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-slate-700 p-2 rounded transition" title="Delete"><Trash2 size={18}/></button>
                             </div>
                         )}
                     </td>
@@ -436,8 +657,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                                 </td>
                                 <td className="p-3">{c.driverName}</td>
                                 <td className="p-3 text-right">
-                                    <button onClick={() => handleDeleteCheckIn(c.id)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-1.5 rounded transition" title="Delete Check-in">
-                                        <Trash2 size={16} />
+                                    <button onClick={(e) => handleDeleteCheckIn(c.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded transition" title="Delete Check-in">
+                                        <Trash2 size={18} />
                                     </button>
                                 </td>
                             </tr>
@@ -446,146 +667,6 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                 </table>
             )}
         </div>
-    </div>
-  );
-
-  const UserTable = ({ users, title, isRevoked = false }: { users: User[], title: string, isRevoked?: boolean }) => (
-    <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border overflow-hidden ${isRevoked ? 'border-red-100 dark:border-red-800/50 mt-8' : 'border-slate-200 dark:border-slate-700'}`}>
-      <div className={`p-4 border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/50 text-red-800 dark:text-red-300' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'}`}>
-          <h3 className="font-bold flex items-center gap-2">
-            {isRevoked ? <ShieldAlert size={18} /> : <UserIcon size={18} />}
-            {title} ({users.length})
-          </h3>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className={`font-medium border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-300 border-red-100 dark:border-red-800/50' : 'bg-slate-50 dark:bg-slate-700/30 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}>
-            <tr>
-              <th className="p-4">User Details</th>
-              <th className="p-4">Contact</th>
-              <th className="p-4">Assignments</th>
-              <th className="p-4">Role</th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Permissions</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {users.map(user => {
-                const isSysAdmin = isSystemAdminUser(user);
-                return (
-              <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
-                <td className="p-4">
-                   <div className="font-medium text-slate-800 dark:text-slate-100">
-                        {user.firstName} {user.lastName}
-                        {isSysAdmin && <span className="ml-2 text-[10px] bg-yellow-100 dark:bg-yellow-800/50 text-yellow-800 dark:text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-200 dark:border-yellow-700/50 uppercase tracking-wide">SysAdmin</span>}
-                   </div>
-                   <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mt-0.5">ID: {user.id}</div>
-                </td>
-                <td className="p-4 text-slate-500 dark:text-slate-400 font-mono">{user.phone}</td>
-                <td className="p-4">
-                    <div className="space-y-2">
-                        <div className="flex items-start gap-1.5">
-                            <MapPin size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-0.5">Station</span>
-                                {user.currentLocationId ? <span className="text-xs font-medium text-slate-700 dark:text-slate-300 block leading-tight">{getLocationName(user.currentLocationId)}</span> : <span className="text-xs text-slate-400 italic">Not stationed</span>}
-                            </div>
-                        </div>
-
-                        <div className="flex items-start gap-1.5">
-                            <Briefcase size={14} className="text-slate-400 mt-0.5 flex-shrink-0" />
-                            <div>
-                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-0.5">Targets</span>
-                                {user.assignedWorksiteIds && user.assignedWorksiteIds.length > 0 ? (
-                                    <div className="flex flex-col gap-1">
-                                        {user.assignedWorksiteIds.map(id => <span key={id} className="text-xs font-medium text-indigo-700 dark:text-indigo-400 leading-tight">{getLocationName(id)}</span>)}
-                                    </div>
-                                ) : <span className="text-xs text-slate-400 italic">No assignments</span>}
-                            </div>
-                        </div>
-                    </div>
-                </td>
-                <td className="p-4">
-                    <div className="relative w-32">
-                        <select 
-                            value={user.role}
-                            disabled={isSysAdmin}
-                            onChange={async (e) => { await updateUserRole(user.id, e.target.value as UserRole); refreshData(); }}
-                            className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                                user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800/50 focus:ring-purple-500' :
-                                'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 focus:ring-slate-500'
-                            }`}
-                        >
-                            <option value={UserRole.AGENT}>AGENT</option>
-                            <option value={UserRole.ADMIN}>ADMIN</option>
-                        </select>
-                        {!isSysAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>}
-                    </div>
-                </td>
-                <td className="p-4">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' :
-                    user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' :
-                    'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
-                  }`}>
-                    {user.status}
-                  </span>
-                </td>
-                <td className="p-4">
-                   <div className="flex items-center gap-2">
-                    <button 
-                        onClick={() => handleAction(() => toggleUserPermission(user.id, 'canViewHistory'))}
-                        className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/50' : 'text-slate-400 bg-slate-100 dark:bg-slate-700'}`}
-                        title="Toggle View History"
-                    >
-                        {user.permissions.canViewHistory ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
-                    <button
-                        onClick={() => openPermissionsModal(user)}
-                        className={`p-1.5 rounded transition flex items-center gap-1 text-xs font-bold px-2 ${
-                            user.permissions.allowedLocationIds ? 'text-orange-600 bg-orange-50 dark:bg-orange-900/50 border border-orange-200 dark:border-orange-800/50' : 'text-slate-600 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600'
-                        }`}
-                        title="Manage Location Access"
-                    >
-                        <Lock size={14} />
-                        {user.permissions.allowedLocationIds ? `${user.permissions.allowedLocationIds.length}` : 'All'}
-                    </button>
-                   </div>
-                </td>
-                <td className="p-4 text-right">
-                  <div className="flex justify-end gap-1">
-                    {!isSysAdmin && (
-                        <>
-                        {user.status === UserStatus.PENDING && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 dark:bg-green-900/50 dark:hover:bg-green-900 dark:text-green-300 p-2 rounded" title="Approve">
-                            <CheckCircle size={16} />
-                        </button>
-                        )}
-                        
-                        {user.status !== UserStatus.REVOKED && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-900 dark:text-red-300 p-2 rounded" title="Revoke Access">
-                            <XCircle size={16} />
-                        </button>
-                        )}
-
-                        {user.status === UserStatus.REVOKED && (
-                        <button onClick={() => handleAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200 p-2 rounded" title="Restore Access">
-                            <CheckCircle size={16} />
-                        </button>
-                        )}
-                        </>
-                    )}
-                    {isSysAdmin && (
-                        <span className="text-slate-400 dark:text-slate-500 text-xs italic flex items-center gap-1"><ShieldCheck size={14}/> Protected</span>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            )})}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 
@@ -637,8 +718,31 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
            </div>
        </div>
 
-       {activeUsers.length > 0 && <UserTable users={activeUsers} title="Active & Pending Users" />}
-       {revokedUsers.length > 0 && <UserTable users={revokedUsers} title="Revoked Users" isRevoked={true} />}
+       {activeUsers.length > 0 && (
+          <UserTable 
+            users={activeUsers} 
+            title="Active & Pending Users" 
+            data={data} 
+            refreshData={refreshData}
+            onUpdateStation={handleUpdateStation}
+            onUpdateTargets={handleUpdateTargets}
+            onOpenPermissions={openPermissionsModal}
+            onAction={handleAction}
+          />
+       )}
+       {revokedUsers.length > 0 && (
+          <UserTable 
+            users={revokedUsers} 
+            title="Revoked Users" 
+            isRevoked={true} 
+            data={data} 
+            refreshData={refreshData}
+            onUpdateStation={handleUpdateStation}
+            onUpdateTargets={handleUpdateTargets}
+            onOpenPermissions={openPermissionsModal}
+            onAction={handleAction}
+          />
+       )}
     </div>
   );
 
@@ -792,10 +896,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshDat
                               <div className="bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-sm max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
                                   {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(loc => { const isSelected = selectedAllowedLocationIds.has(loc.id); return (
                                       <div key={loc.id} onClick={() => toggleAllowedLocation(loc.id)} className={`flex items-center px-4 py-3 cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700 ${isSelected ? 'bg-blue-50/30 dark:bg-blue-900/20' : ''}`}>
-                                          <div className={`flex-shrink-0 mr-3 transition-colors ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-500'}`}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div>
+                                          <div className={`flex-shrink-0 mr-3 transition-colors ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-50'}`}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div>
                                           <div className="flex-1 min-w-0">
                                               <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900 dark:text-blue-200' : 'text-slate-700 dark:text-slate-300'}`}>{loc.name}</div>
-                                              <div className="flex items-center gap-1.5 mt-0.5">{loc.type === LocationType.HOTEL ? <span className="text-[10px] bg-slate-100 dark:bg-slate-600 text-slate-500 dark:text-slate-300 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-500">Hotel</span> : <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800/50">Worksite</span>}</div>
+                                              <div className="flex items-center gap-1.5 mt-0.5">{loc.type === LocationType.HOTEL ? <span className="text-[10px] bg-slate-100 dark:bg-slate-600 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-500">Hotel</span> : <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800/50">Worksite</span>}</div>
                                           </div>
                                       </div>
                                   )})}

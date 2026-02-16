@@ -1,12 +1,12 @@
-/// <reference types="vite/client" />
 import { createClient } from '@supabase/supabase-js';
 import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType } from '../types';
 
 // Initialize Supabase Client
 const getEnvVar = (key: string, fallback: string = '') => {
   try {
-    if (import.meta && import.meta.env && import.meta.env[key]) {
-      return import.meta.env[key];
+    const meta = import.meta as any;
+    if (meta && meta.env && meta.env[key]) {
+      return meta.env[key];
     }
   } catch (e) {
     // Ignore
@@ -42,12 +42,19 @@ const mapUser = (data: any): User => {
     };
   }
 
+  // Normalize Role to uppercase to match Enum
+  let normalizedRole = UserRole.AGENT;
+  const dbRole = (data.role || '').toUpperCase();
+  
+  if (dbRole === 'ADMIN') normalizedRole = UserRole.ADMIN;
+  else normalizedRole = UserRole.AGENT; // Default fallback for any legacy or unknown roles
+
   return {
     id: data.id,
     firstName: data.first_name,
     lastName: data.last_name,
     phone: data.phone,
-    role: data.role as UserRole,
+    role: normalizedRole,
     status: data.status as UserStatus,
     permissions: data.permissions || { canViewHistory: true, canLogTrips: true },
     joinedAt: data.joined_at,
@@ -219,8 +226,8 @@ export const toggleUserRole = async (userId: string) => {
   const { data } = await supabase.from('users').select('role').eq('id', userId).single();
   if (data) {
     let newRole = UserRole.AGENT;
-    if (data.role === UserRole.AGENT) newRole = UserRole.ONSITE_COORDINATOR;
-    else if (data.role === UserRole.ONSITE_COORDINATOR) newRole = UserRole.ADMIN;
+    // Simple toggle logic since we only have ADMIN and AGENT now
+    if (data.role === UserRole.AGENT || data.role === 'ONSITE_COORDINATOR') newRole = UserRole.ADMIN;
     else newRole = UserRole.AGENT; 
     
     await supabase.from('users').update({ role: newRole }).eq('id', userId);

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppData, User, UserRole, LocationType } from '../types';
 import { sendMessage, markMessagesAsRead, updateUserAssignedWorksite } from '../services/supabaseService';
-import { Send, User as UserIcon, Briefcase, BadgeCheck, Plus, X } from 'lucide-react';
+import { Send, User as UserIcon, Briefcase, Plus, X } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -65,33 +65,20 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
         const lastMsg = msgs[0];
         const unreadCount = msgs.filter(m => m.fromUserId === u.id && m.toUserId === currentUser.id && !m.isRead).length;
 
-        // Check if this user is a coordinator for my assigned worksite
-        const isCoordinator = 
-            currentUser.assignedWorksiteId && 
-            (u.role === UserRole.ADMIN || u.role === UserRole.ONSITE_COORDINATOR) && 
-            u.currentLocationId === currentUser.assignedWorksiteId;
-
         // Determine if user should show in sidebar:
-        // 1. Is Coordinator (Always show important contact)
-        // 2. Has existing conversation
-        const shouldShow = isCoordinator || existingConversationUserIds.has(u.id);
+        // 1. Has existing conversation
+        const shouldShow = existingConversationUserIds.has(u.id);
 
         return {
             user: u,
             lastMsgTime: lastMsg ? new Date(lastMsg.timestamp).getTime() : 0,
             unreadCount,
-            isCoordinator,
             shouldShow
         };
     });
 
   // Filter for display
-  const displayUsers = allUsers.filter(u => u.shouldShow).sort((a, b) => {
-      // Coordinators first, then by recent message
-      if (a.isCoordinator && !b.isCoordinator) return -1;
-      if (!a.isCoordinator && b.isCoordinator) return 1;
-      return b.lastMsgTime - a.lastMsgTime;
-  });
+  const displayUsers = allUsers.filter(u => u.shouldShow).sort((a, b) => b.lastMsgTime - a.lastMsgTime);
 
   // Filter messages for selected conversation
   const conversation = selectedUserId 
@@ -109,27 +96,21 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
     refreshData();
   };
 
-  const renderUserItem = ({ user, unreadCount, isCoordinator }: typeof allUsers[0]) => (
+  const renderUserItem = ({ user, unreadCount }: typeof allUsers[0]) => (
     <button
       key={user.id}
       onClick={() => handleSelectUser(user.id)}
-      className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition flex items-center justify-between ${selectedUserId === user.id ? 'bg-blue-50 border-blue-100' : ''} ${isCoordinator ? 'bg-indigo-50/50' : ''}`}
+      className={`w-full text-left p-4 border-b border-slate-50 hover:bg-slate-50 transition flex items-center justify-between ${selectedUserId === user.id ? 'bg-blue-50 border-blue-100' : ''}`}
     >
       <div className="flex items-center space-x-3">
-          <div className={`p-2 rounded-full relative ${isCoordinator ? 'bg-indigo-200 text-indigo-700' : 'bg-slate-200 text-slate-500'}`}>
-            {isCoordinator ? <BadgeCheck size={20} /> : <UserIcon size={20} />}
+          <div className="p-2 rounded-full relative bg-slate-200 text-slate-500">
+            <UserIcon size={20} />
           </div>
           <div>
             <div className="font-medium text-slate-800 flex items-center gap-1">
                 {user.firstName} {user.lastName}
             </div>
-            {isCoordinator ? (
-                <div className="text-xs text-indigo-600 font-bold uppercase tracking-wider flex items-center gap-1">
-                    On-site Coordinator
-                </div>
-            ) : (
-                <div className="text-xs text-slate-500 uppercase">{user.role.replace('_', ' ')}</div>
-            )}
+            <div className="text-xs text-slate-500 uppercase">{user.role}</div>
           </div>
       </div>
       {unreadCount > 0 && (
@@ -166,9 +147,6 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                 placeholder="Select your worksite..."
                 compact={true}
             />
-            <p className="text-[10px] text-slate-500 mt-1 leading-tight">
-                Select your worksite to find your coordinator.
-            </p>
         </div>
 
         <div className="p-3 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -219,7 +197,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                             </div>
                             <div>
                                 <div className="font-medium text-slate-800 text-sm">{u.firstName} {u.lastName}</div>
-                                <div className="text-xs text-slate-500">{u.role.replace('_', ' ')}</div>
+                                <div className="text-xs text-slate-500">{u.role}</div>
                             </div>
                         </button>
                     ))}
@@ -236,11 +214,6 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
             <div className="text-center">
                 <Send size={48} className="mx-auto mb-4 opacity-20" />
                 <p>Select a user to start messaging</p>
-                {(!currentUser.assignedWorksiteId) && (
-                    <p className="text-xs text-orange-500 mt-2">
-                        Tip: Select your worksite to find your coordinator.
-                    </p>
-                )}
             </div>
           </div>
         ) : (
@@ -255,9 +228,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                             {allUsers.find(item => item.user.id === selectedUserId)?.user.firstName} {allUsers.find(item => item.user.id === selectedUserId)?.user.lastName}
                         </div>
                         <div className="text-xs text-slate-500">
-                             {allUsers.find(item => item.user.id === selectedUserId)?.isCoordinator 
-                                ? 'On-site Coordinator' 
-                                : allUsers.find(item => item.user.id === selectedUserId)?.user.role.replace('_', ' ')}
+                             {allUsers.find(item => item.user.id === selectedUserId)?.user.role}
                         </div>
                    </div>
                </div>

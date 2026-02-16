@@ -48,7 +48,7 @@ const App: React.FC = () => {
     // Poll for updates
     const interval = setInterval(() => {
       fetchData();
-    }, 5000); // Polling every 5s is safer for DBs than 2s
+    }, 5000); // Polling every 5s
 
     const handleClickOutside = (event: MouseEvent) => {
       if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
@@ -90,7 +90,7 @@ const App: React.FC = () => {
     );
   }
 
-  // Safety check for data
+  // Safety check
   if (!data) return null;
 
   const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
@@ -109,6 +109,7 @@ const App: React.FC = () => {
 
   const filteredUsers = searchQuery ? data.users.filter(u => {
     const nameMatch = (u.firstName + ' ' + u.lastName).toLowerCase().includes(searchQuery.toLowerCase());
+    // ONLY Admins can search by phone number
     const phoneMatch = currentUser?.role === UserRole.ADMIN && u.phone.includes(searchQuery);
     return nameMatch || phoneMatch;
   }).slice(0, 5) : [];
@@ -160,7 +161,7 @@ const App: React.FC = () => {
     );
   }
 
-  const canAccessAdminConsole = currentUser.role === UserRole.ADMIN || currentUser.role === UserRole.ONSITE_COORDINATOR;
+  const canAccessAdminConsole = currentUser.role === UserRole.ADMIN;
 
   return (
     <div className="min-h-screen bg-slate-100 pb-20 md:pb-0">

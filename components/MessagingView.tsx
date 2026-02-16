@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AppData, User, UserRole, LocationType, Group } from '../types';
-import { sendMessage, markMessagesAsRead, createGroup } from '../services/supabaseService';
-import { Send, User as UserIcon, Briefcase, Plus, X, Users as UsersIcon, MessageSquare, MapPin, Search, Loader2, ChevronLeft } from 'lucide-react';
+import { sendMessage, markMessagesAsRead, createGroup, leaveGroup } from '../services/supabaseService';
+import { Send, User as UserIcon, Briefcase, Plus, X, Users as UsersIcon, MessageSquare, MapPin, Search, Loader2, ChevronLeft, Info, LogOut } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -31,6 +31,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
   const [msgContent, setMsgContent] = useState('');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   const [newChatSearch, setNewChatSearch] = useState('');
+  const [isGroupInfoOpen, setIsGroupInfoOpen] = useState(false);
   
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -47,6 +48,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
   const handleSelectChat = async (id: string) => {
       setSelectedChatId(id);
       setIsNewChatOpen(false);
+      setIsGroupInfoOpen(false);
       
       const isGroup = data.groups?.some(g => g.id === id);
       if (!isGroup) {
@@ -66,6 +68,16 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
 
   const handleLocationChange = async (val: string) => {
     await onUpdateProfile({ currentLocationId: val });
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!selectedChatId) return;
+    if (window.confirm('Are you sure you want to leave this group?')) {
+        await leaveGroup(selectedChatId, currentUser.id);
+        setSelectedChatId(null);
+        setIsGroupInfoOpen(false);
+        refreshData();
+    }
   };
 
   const myGroups = useMemo(() => (data.groups || []).filter(g => g.memberIds.includes(currentUser.id)), [data.groups, currentUser.id]);
@@ -112,6 +124,11 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
           selectedGroup ? m.groupId === selectedChatId : !m.groupId && ((m.fromUserId === currentUser.id && m.toUserId === selectedChatId) || (m.fromUserId === selectedChatId && m.toUserId === currentUser.id))
       ).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   }, [selectedChatId, selectedGroup, data.messages, currentUser.id]);
+
+  const groupMembers = useMemo(() => {
+    if (!selectedGroup) return [];
+    return selectedGroup.memberIds.map(id => data.users.find(u => u.id === id)).filter(Boolean) as User[];
+  }, [selectedGroup, data.users]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -182,10 +199,10 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                   </div>
               </div>
           ) : (
-            <div className="flex flex-col h-full overflow-hidden">
+            <div className="flex flex-col h-full overflow-hidden relative">
               {/* STUCK HEADER - WhatsApp Style */}
-              <div className="flex-shrink-0 h-14 border-b border-slate-200 dark:border-slate-700 flex items-center px-3 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md z-10">
-                  <button onClick={() => setSelectedChatId(null)} className="md:hidden p-1.5 -ml-1 text-blue-600 transition">
+              <div className="flex-shrink-0 h-14 border-b border-slate-200 dark:border-slate-700 flex items-center px-3 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md z-10 cursor-pointer" onClick={() => selectedGroup && setIsGroupInfoOpen(true)}>
+                  <button onClick={(e) => { e.stopPropagation(); setSelectedChatId(null); }} className="md:hidden p-1.5 -ml-1 text-blue-600 transition">
                       <ChevronLeft size={24} />
                   </button>
                   <div className="flex items-center gap-3 ml-1 flex-1 min-w-0">
@@ -197,10 +214,11 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                               {selectedGroup ? selectedGroup.name : (selectedUser ? `${selectedUser.firstName} ${selectedUser.lastName}` : 'Loading...')}
                           </div>
                           <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
-                              {selectedGroup ? `${selectedGroup.memberIds.length} members` : (selectedUser?.role || 'Dispatcher')}
+                              {selectedGroup ? `${selectedGroup.memberIds.length} members • Tap for info` : (selectedUser?.role || 'Dispatcher')}
                           </div>
                       </div>
                   </div>
+                  {selectedGroup && <Info size={18} className="text-blue-600 ml-2" />}
               </div>
 
               {/* SCROLLABLE MESSAGE LIST - Compact WhatsApp Style */}
@@ -267,6 +285,60 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                       </button>
                   </form>
               </div>
+
+              {/* GROUP INFO OVERLAY (iOS Style) */}
+              {isGroupInfoOpen && selectedGroup && (
+                <div className="absolute inset-0 bg-slate-50 dark:bg-slate-900 z-50 flex flex-col animate-slideInRight">
+                    <div className="h-14 bg-white/90 dark:bg-slate-800/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-700 flex items-center px-4 justify-between sticky top-0 z-10">
+                        <button onClick={() => setIsGroupInfoOpen(false)} className="text-blue-600 flex items-center gap-1 font-medium">
+                            <ChevronLeft size={24} className="-ml-1" /> Back
+                        </button>
+                        <h4 className="font-bold text-slate-800 dark:text-slate-100">Group Info</h4>
+                        <div className="w-12"></div>
+                    </div>
+                    <div className="flex-1 overflow-y-auto no-scrollbar">
+                        <div className="p-8 text-center bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700">
+                             <div className="w-20 h-20 bg-indigo-100 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                 <UsersIcon size={40} />
+                             </div>
+                             <h2 className="text-xl font-bold text-slate-900 dark:text-slate-100">{selectedGroup.name}</h2>
+                             <p className="text-sm text-slate-500 mt-1">Group • {selectedGroup.memberIds.length} Participants</p>
+                        </div>
+
+                        <div className="mt-6 bg-white dark:bg-slate-800 border-y border-slate-200 dark:border-slate-700">
+                            <div className="px-4 py-2 border-b border-slate-100 dark:border-slate-700 text-[10px] font-black uppercase text-slate-400 tracking-widest bg-slate-50/50 dark:bg-slate-900/50">
+                                Participants
+                            </div>
+                            <div className="divide-y divide-slate-100 dark:divide-slate-700">
+                                {groupMembers.map(member => (
+                                    <div key={member.id} className="p-4 flex items-center gap-3">
+                                        <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold bg-slate-100 dark:bg-slate-700 ${getNameColor(member.id)}`}>
+                                            {member.firstName[0]}{member.lastName[0]}
+                                        </div>
+                                        <div className="flex-1">
+                                            <div className="font-bold text-slate-800 dark:text-slate-100 text-sm">
+                                                {member.firstName} {member.lastName} {member.id === currentUser.id && '(You)'}
+                                            </div>
+                                            <div className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-black tracking-tight">{member.role}</div>
+                                        </div>
+                                        {member.id === selectedGroup.createdByUserId && <span className="text-[9px] font-bold text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-100 uppercase tracking-tighter">Admin</span>}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-10 mb-20 px-4">
+                            <button 
+                                onClick={handleLeaveGroup}
+                                className="w-full bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-red-600 font-bold py-4 rounded-xl flex items-center justify-center gap-2 shadow-sm active:bg-red-50 transition"
+                            >
+                                <LogOut size={18} /> Leave Group
+                            </button>
+                            <p className="text-center text-slate-400 text-[10px] mt-4 uppercase font-black tracking-widest">Secure Dispatch Channel</p>
+                        </div>
+                    </div>
+                </div>
+              )}
             </div>
           )}
         </div>

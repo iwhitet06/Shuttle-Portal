@@ -289,6 +289,18 @@ export const createGroup = async (name: string, creatorId: string, memberIds: st
     return mapGroup(data);
 };
 
+export const leaveGroup = async (groupId: string, userId: string) => {
+    const { data: group } = await supabase.from('groups').select('member_ids').eq('id', groupId).single();
+    if (group) {
+        const newMembers = (group.member_ids || []).filter((id: string) => id !== userId);
+        if (newMembers.length === 0) {
+            await supabase.from('groups').delete().eq('id', groupId);
+        } else {
+            await supabase.from('groups').update({ member_ids: newMembers }).eq('id', groupId);
+        }
+    }
+};
+
 export const cleanupStaleTrips = async () => {
   const { data: activeTrips, error } = await supabase.from('logs').select('*').eq('status', TripStatus.IN_TRANSIT);
   if (error || !activeTrips || activeTrips.length === 0) return;

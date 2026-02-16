@@ -267,7 +267,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
                               value={msgContent} 
                               onChange={e => setMsgContent(e.target.value)} 
                               placeholder="Message" 
-                              className="flex-1 bg-transparent border-none py-2 px-3 focus:ring-0 outline-none text-slate-900 dark:text-slate-100 text-sm font-medium resize-none max-h-32" 
+                              className="flex-1 bg-transparent border-none py-2 px-3 focus:ring-0 outline-none text-slate-900 dark:text-slate-100 text-base font-medium resize-none max-h-32" 
                               onKeyDown={(e) => {
                                   if (e.key === 'Enter' && !e.shiftKey) {
                                       e.preventDefault();
@@ -350,7 +350,7 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
               <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
                   <div className="relative flex-1">
                       <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
-                      <input type="text" autoFocus placeholder="Search teammates..." className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl pl-9 pr-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none" value={newChatSearch} onChange={e => setNewChatSearch(e.target.value)} />
+                      <input type="text" autoFocus placeholder="Search teammates..." className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl pl-9 pr-3 py-2 text-base focus:ring-1 focus:ring-blue-500 outline-none" value={newChatSearch} onChange={e => setNewChatSearch(e.target.value)} />
                   </div>
                   <button onClick={() => setIsNewChatOpen(false)} className="text-blue-600 font-medium text-sm">Cancel</button>
               </div>

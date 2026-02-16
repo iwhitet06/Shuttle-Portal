@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { AppData, User, UserRole, LocationType, Group } from '../types';
 import { sendMessage, markMessagesAsRead, createGroup } from '../services/supabaseService';
-import { Send, User as UserIcon, Briefcase, Plus, X, Users as UsersIcon, MessageSquare, MapPin } from 'lucide-react';
+import { Send, User as UserIcon, Briefcase, Plus, X, Users as UsersIcon, MessageSquare, MapPin, Search, Loader2, ChevronLeft } from 'lucide-react';
 import { SearchableDropdown } from './SearchableDropdown';
 
 interface MessagingViewProps {
@@ -12,14 +12,33 @@ interface MessagingViewProps {
   onUpdateProfile: (updates: { currentLocationId?: string, assignedWorksiteIds?: string[] }) => Promise<void>;
 }
 
+// WhatsApp-style color palette for participant names
+const NAME_COLORS = [
+  'text-blue-600', 'text-green-600', 'text-purple-600', 'text-orange-600', 
+  'text-pink-600', 'text-indigo-600', 'text-teal-600', 'text-red-600'
+];
+
+const getNameColor = (userId: string) => {
+  let hash = 0;
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  return NAME_COLORS[Math.abs(hash) % NAME_COLORS.length];
+};
+
 export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser, refreshData, initialSelectedUserId, onUpdateProfile }) => {
   const [selectedChatId, setSelectedChatId] = useState<string | null>(initialSelectedUserId || null);
   const [msgContent, setMsgContent] = useState('');
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
-  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [newChatSearch, setNewChatSearch] = useState('');
-  const [newGroupName, setNewGroupName] = useState('');
-  const [newGroupMemberIds, setNewGroupMemberIds] = useState<string[]>([]);
+  
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    }
+  }, [selectedChatId, data.messages]);
 
   useEffect(() => {
     if (initialSelectedUserId) setSelectedChatId(initialSelectedUserId);
@@ -28,9 +47,15 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
   const handleSelectChat = async (id: string) => {
       setSelectedChatId(id);
       setIsNewChatOpen(false);
-      setNewChatSearch('');
+      
       const isGroup = data.groups?.some(g => g.id === id);
-      if (!isGroup) await markMessagesAsRead(id, currentUser.id); 
+      if (!isGroup) {
+          try {
+            await markMessagesAsRead(id, currentUser.id); 
+          } catch (e) {
+            console.error("Read receipt failed", e);
+          }
+      }
       refreshData();
   };
 
@@ -43,92 +68,236 @@ export const MessagingView: React.FC<MessagingViewProps> = ({ data, currentUser,
     await onUpdateProfile({ currentLocationId: val });
   };
 
-  const allowedIds = currentUser.permissions.allowedLocationIds;
-  const activeWorksites = data.locations.filter(l => l.isActive && l.type === LocationType.WORKSITE && (!allowedIds || allowedIds.length === 0 || allowedIds.includes(l.id)));
-  const activeLocations = data.locations.filter(l => l.isActive && (!allowedIds || allowedIds.length === 0 || allowedIds.includes(l.id)));
-  const myGroups = (data.groups || []).filter(g => g.memberIds.includes(currentUser.id));
-  const myWorksiteIds = currentUser.assignedWorksiteIds || [];
-  const validUsers = data.users.filter(u => u.id !== currentUser.id && u.status === 'ACTIVE' && u.phone !== '000-000-0000');
+  const myGroups = useMemo(() => (data.groups || []).filter(g => g.memberIds.includes(currentUser.id)), [data.groups, currentUser.id]);
+  const validUsers = useMemo(() => data.users.filter(u => u.id !== currentUser.id && u.status === 'ACTIVE' && u.phone !== '000-000-0000'), [data.users, currentUser.id]);
 
-  const existingConversationUserIds = new Set<string>();
-  data.messages.forEach(m => { if (!m.groupId) { if (m.fromUserId === currentUser.id) existingConversationUserIds.add(m.toUserId!); if (m.toUserId === currentUser.id) existingConversationUserIds.add(m.fromUserId!); } });
-
-  const allUsers = validUsers.map(u => {
+  const displayItems = useMemo(() => {
+    const allUsers = validUsers.map(u => {
         const msgs = data.messages.filter(m => !m.groupId && ((m.fromUserId === currentUser.id && m.toUserId === u.id) || (m.fromUserId === u.id && m.toUserId === currentUser.id))).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
         const lastMsg = msgs[0];
         const unreadCount = msgs.filter(m => m.fromUserId === u.id && m.toUserId === currentUser.id && !m.isRead).length;
-        const sharesWorksite = u.assignedWorksiteIds?.some(id => myWorksiteIds.includes(id));
-        const shouldShow = existingConversationUserIds.has(u.id) || sharesWorksite;
-        return { type: 'USER', id: u.id, name: `${u.firstName} ${u.lastName}`, role: u.role, lastMsgTime: lastMsg ? new Date(lastMsg.timestamp).getTime() : 0, unreadCount, shouldShow, data: u };
+        return { 
+            type: 'USER', 
+            id: u.id, 
+            name: `${u.firstName} ${u.lastName}`, 
+            role: u.role, 
+            lastMsgTime: lastMsg ? new Date(lastMsg.timestamp).getTime() : 0, 
+            unreadCount, 
+            shouldShow: true 
+        };
     });
 
-  const groupItems = myGroups.map(g => {
-      const msgs = data.messages.filter(m => m.groupId === g.id).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      return { type: 'GROUP', id: g.id, name: g.name, role: 'Group', lastMsgTime: msgs[0] ? new Date(msgs[0].timestamp).getTime() : 0, unreadCount: 0, shouldShow: true, data: g };
-  });
+    const groupItems = myGroups.map(g => {
+        const msgs = data.messages.filter(m => m.groupId === g.id).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+        return { 
+            type: 'GROUP', 
+            id: g.id, 
+            name: g.name, 
+            role: 'Group', 
+            lastMsgTime: msgs[0] ? new Date(msgs[0].timestamp).getTime() : 0, 
+            unreadCount: 0, 
+            shouldShow: true 
+        };
+    });
 
-  const displayItems = [...allUsers.filter(u => u.shouldShow), ...groupItems].sort((a, b) => b.lastMsgTime - a.lastMsgTime);
-  const isSelectedGroup = myGroups.some(g => g.id === selectedChatId);
-  const selectedUser = !isSelectedGroup ? data.users.find(u => u.id === selectedChatId) : null;
-  const selectedGroup = isSelectedGroup ? myGroups.find(g => g.id === selectedChatId) : null;
-  const conversation = selectedChatId ? data.messages.filter(m => isSelectedGroup ? m.groupId === selectedChatId : !m.groupId && ((m.fromUserId === currentUser.id && m.toUserId === selectedChatId) || (m.fromUserId === selectedChatId && m.toUserId === currentUser.id))).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()) : [];
+    return [...allUsers, ...groupItems].sort((a, b) => b.lastMsgTime - a.lastMsgTime);
+  }, [validUsers, data.messages, currentUser.id, myGroups]);
+
+  const selectedGroup = useMemo(() => myGroups.find(g => g.id === selectedChatId), [myGroups, selectedChatId]);
+  const selectedUser = useMemo(() => !selectedGroup ? data.users.find(u => u.id === selectedChatId) : null, [data.users, selectedChatId, selectedGroup]);
+  
+  const conversation = useMemo(() => {
+      if (!selectedChatId) return [];
+      return data.messages.filter(m => 
+          selectedGroup ? m.groupId === selectedChatId : !m.groupId && ((m.fromUserId === currentUser.id && m.toUserId === selectedChatId) || (m.fromUserId === selectedChatId && m.toUserId === currentUser.id))
+      ).sort((a,b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  }, [selectedChatId, selectedGroup, data.messages, currentUser.id]);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedChatId || !msgContent.trim()) return;
-    await sendMessage(currentUser.id, selectedChatId, msgContent, !!selectedGroup);
-    setMsgContent(''); refreshData();
+    const content = msgContent.trim();
+    setMsgContent('');
+    await sendMessage(currentUser.id, selectedChatId, content, !!selectedGroup);
+    refreshData();
   };
-
-  const handleCreateGroup = async (e: React.FormEvent) => {
-      e.preventDefault();
-      if (!newGroupName || newGroupMemberIds.length === 0) return;
-      const newGroup = await createGroup(newGroupName, currentUser.id, newGroupMemberIds);
-      setIsCreateGroupOpen(false); setNewGroupName(''); setNewGroupMemberIds([]);
-      handleSelectChat(newGroup.id);
-  };
-
-  const renderSidebarItem = (item: typeof displayItems[0]) => (
-    <button key={item.id} onClick={() => handleSelectChat(item.id)} className={`w-full text-left p-4 border-b border-slate-50 dark:border-slate-700/50 hover:bg-slate-50 dark:hover:bg-slate-700/50 transition flex items-center justify-between ${selectedChatId === item.id ? 'bg-blue-50 dark:bg-blue-900/20 border-l-2 border-blue-500' : 'border-l-2 border-transparent'}`}>
-      <div className="flex items-center space-x-3"><div className={`p-2 rounded-full relative ${item.type === 'GROUP' ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300' : 'bg-slate-200 dark:bg-slate-600 text-slate-500 dark:text-slate-300'}`}>{item.type === 'GROUP' ? <UsersIcon size={20} /> : <UserIcon size={20} />}</div><div><div className="font-medium text-slate-800 dark:text-slate-100 flex items-center gap-1">{item.name}</div><div className="text-xs text-slate-500 dark:text-slate-400 uppercase">{item.role}</div></div></div>
-      {item.unreadCount > 0 && <div className="bg-blue-600 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full shadow-sm">{item.unreadCount}</div>}
-    </button>
-  );
 
   const isAdmin = currentUser.role === UserRole.ADMIN;
 
   return (
-    <div className="h-[calc(100vh-100px)] max-w-6xl mx-auto flex flex-col md:flex-row bg-white dark:bg-slate-800 rounded-xl shadow-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
-      <div className={`md:w-1/3 border-r border-slate-200 dark:border-slate-700 flex flex-col relative ${selectedChatId ? 'hidden md:flex' : 'flex'}`}>
-        <div className="p-4 bg-slate-100 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 space-y-3">
-            <div><label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 flex items-center gap-1"><MapPin size={12} /> My Current Location</label><SearchableDropdown options={activeLocations} value={currentUser.currentLocationId || ''} onChange={handleLocationChange} placeholder="Select location" compact={true} /></div>
-            <div><label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 flex items-center gap-1"><Briefcase size={12} /> Assigned Targets</label><SearchableDropdown options={activeWorksites} value={isAdmin ? currentUser.assignedWorksiteIds || [] : (currentUser.assignedWorksiteIds?.[0] || '')} onChange={handleWorksiteChange} placeholder="Select worksite" compact={true} multiple={isAdmin} /></div>
+    <div className="fixed inset-x-0 bottom-0 top-[64px] flex flex-col md:static md:h-[calc(100vh-120px)] md:max-w-6xl md:mx-auto bg-white dark:bg-slate-800 md:rounded-2xl md:shadow-xl border-t md:border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
+        <div className={`w-full md:w-72 border-r border-slate-200 dark:border-slate-700 flex flex-col relative ${selectedChatId ? 'hidden md:flex' : 'flex'}`}>
+          <div className="p-3 bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-700 space-y-2">
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1.5 px-1 tracking-wider"><MapPin size={10} /> My Station</label>
+                <SearchableDropdown options={data.locations.filter(l => l.isActive)} value={currentUser.currentLocationId || ''} onChange={handleLocationChange} placeholder="Set Station" compact={true} />
+              </div>
+              <div>
+                <label className="text-[10px] font-black text-slate-400 uppercase mb-1 flex items-center gap-1.5 px-1 tracking-wider"><Briefcase size={10} /> Assigned Targets</label>
+                <SearchableDropdown options={data.locations.filter(l => l.isActive && l.type === LocationType.WORKSITE)} value={isAdmin ? currentUser.assignedWorksiteIds || [] : (currentUser.assignedWorksiteIds?.[0] || '')} onChange={handleWorksiteChange} placeholder="Set Target" compact={true} multiple={isAdmin} />
+              </div>
+          </div>
+          
+          <div className="p-3 border-b border-slate-100 dark:border-slate-700 bg-white dark:bg-slate-800 flex justify-between items-center">
+              <h3 className="font-bold text-slate-900 dark:text-slate-100 text-lg">Chats</h3>
+              <button onClick={() => setIsNewChatOpen(true)} className="p-1.5 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition"><Search size={18} /></button>
+          </div>
+          
+          <div className="flex-1 overflow-y-auto bg-white dark:bg-slate-800 no-scrollbar">
+              {displayItems.length > 0 ? displayItems.map(item => (
+                <button 
+                  key={item.id} 
+                  onClick={() => handleSelectChat(item.id)} 
+                  className={`w-full text-left px-4 py-3 border-b border-slate-50 dark:border-slate-700/30 transition-all flex items-center gap-3 ${selectedChatId === item.id ? 'bg-slate-100 dark:bg-slate-700' : 'hover:bg-slate-50 dark:hover:bg-slate-700/50'}`}
+                >
+                  <div className={`w-12 h-12 rounded-full flex-shrink-0 flex items-center justify-center ${item.type === 'GROUP' ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                    {item.type === 'GROUP' ? <UsersIcon size={20} /> : <UserIcon size={20} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex justify-between items-baseline mb-0.5">
+                      <div className="font-bold text-slate-900 dark:text-slate-100 truncate text-sm">{item.name}</div>
+                      {item.lastMsgTime > 0 && <span className="text-[10px] text-slate-400 font-medium">{new Date(item.lastMsgTime).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>}
+                    </div>
+                    <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate tracking-tight">{item.role}</div>
+                  </div>
+                  {item.unreadCount > 0 && <div className="bg-blue-600 text-white text-[10px] font-bold w-5 h-5 flex items-center justify-center rounded-full shadow-sm ml-1">{item.unreadCount}</div>}
+                </button>
+              )) : (
+                  <div className="p-12 text-center text-slate-400 text-sm">No chats yet</div>
+              )}
+          </div>
         </div>
-        <div className="p-3 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center"><h3 className="font-bold text-slate-700 dark:text-slate-200 text-sm">Chats</h3><div className="flex gap-1">{isAdmin && <button onClick={() => setIsCreateGroupOpen(true)} className="p-1 text-purple-600 dark:text-purple-400 hover:bg-purple-100 dark:hover:bg-purple-900/50 rounded-full transition" title="Create Group"><UsersIcon size={20} /></button>}<button onClick={() => setIsNewChatOpen(true)} className="p-1 text-blue-600 dark:text-blue-400 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-full transition" title="New Chat"><Plus size={20} /></button></div></div>
-        <div className="flex-1 overflow-y-auto">{displayItems.length > 0 ? displayItems.map(item => renderSidebarItem(item)) : <div className="p-8 text-center text-slate-400 dark:text-slate-500 text-sm">No active chats.</div>}</div>
-        {isNewChatOpen && (
-        <div className="absolute inset-0 bg-white dark:bg-slate-800 z-50 flex flex-col animate-fadeIn">
-            <div className="p-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2 bg-slate-50 dark:bg-slate-900/50"><div className="relative flex-1"><input type="text" autoFocus placeholder="Search users..." className="w-full bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-lg pl-3 pr-3 py-2 text-sm focus:ring-2 focus:ring-blue-500 outline-none" value={newChatSearch} onChange={e => setNewChatSearch(e.target.value)} /></div><button onClick={() => setIsNewChatOpen(false)} className="text-slate-400 hover:text-slate-600 p-2"><X size={20} /></button></div>
-            <div className="flex-1 overflow-y-auto">{validUsers.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(newChatSearch.toLowerCase())).map(u => (<button key={u.id} onClick={() => handleSelectChat(u.id)} className="w-full text-left p-3 hover:bg-blue-50 dark:hover:bg-slate-700 border-b border-slate-50 dark:border-slate-700/50 flex items-center gap-3"><div className="bg-slate-200 dark:bg-slate-600 p-2 rounded-full text-slate-500 dark:text-slate-300"><UserIcon size={16} /></div><div><div className="font-medium text-slate-800 dark:text-slate-200 text-sm">{u.firstName} {u.lastName}</div><div className="text-xs text-slate-500 dark:text-slate-400">{u.role}</div></div></button>))}</div>
-        </div>)}
-        {isCreateGroupOpen && (
-            <div className="absolute inset-0 bg-white dark:bg-slate-800 z-50 flex flex-col animate-fadeIn">
-                <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-purple-50 dark:bg-purple-900/20 flex justify-between items-center"><h3 className="font-bold text-purple-900 dark:text-purple-200 flex items-center gap-2"><UsersIcon size={18} /> New Group Chat</h3><button onClick={() => setIsCreateGroupOpen(false)} className="text-slate-400 hover:text-slate-600"><X size={20} /></button></div>
-                <form onSubmit={handleCreateGroup} className="flex-1 p-4 flex flex-col gap-4">
-                    <div><label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Group Name</label><input type="text" className="w-full border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-lg p-2 text-sm focus:ring-2 focus:ring-purple-500 outline-none" placeholder="e.g. Dispatch Team" value={newGroupName} onChange={e => setNewGroupName(e.target.value)} required /></div>
-                    <div className="flex-1 flex flex-col min-h-0"><label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1 block">Add Members</label><div className="flex-1 border border-slate-200 dark:border-slate-700 rounded-lg overflow-y-auto bg-white dark:bg-slate-800">{validUsers.map(u => (<label key={u.id} className="flex items-center gap-3 p-3 hover:bg-slate-50 dark:hover:bg-slate-700/50 border-b border-slate-50 dark:border-slate-700/50 cursor-pointer"><input type="checkbox" className="w-4 h-4 text-purple-600 rounded" checked={newGroupMemberIds.includes(u.id)} onChange={e => { if (e.target.checked) setNewGroupMemberIds([...newGroupMemberIds, u.id]); else setNewGroupMemberIds(newGroupMemberIds.filter(id => id !== u.id)); }} /><div><div className="text-sm font-medium text-slate-800 dark:text-slate-200">{u.firstName} {u.lastName}</div><div className="text-xs text-slate-500 dark:text-slate-400">{u.role}</div></div></label>))}</div></div>
-                    <button type="submit" className="w-full bg-purple-600 text-white font-bold py-2.5 rounded-lg shadow hover:bg-purple-700 disabled:opacity-50" disabled={!newGroupName || newGroupMemberIds.length === 0}>Create Group</button>
-                </form>
+
+        {/* Main Chat Interface */}
+        <div className={`flex-1 flex flex-col bg-slate-50 dark:bg-slate-900 ${!selectedChatId ? 'hidden md:flex' : 'flex'}`}>
+          {!selectedChatId ? (
+              <div className="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500 bg-white dark:bg-slate-800">
+                  <div className="text-center">
+                      <div className="w-20 h-20 bg-slate-50 dark:bg-slate-700 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <MessageSquare size={36} className="text-slate-300" />
+                      </div>
+                      <p className="text-sm font-medium">Select a teammate to start chatting</p>
+                  </div>
+              </div>
+          ) : (
+            <div className="flex flex-col h-full overflow-hidden">
+              {/* STUCK HEADER - WhatsApp Style */}
+              <div className="flex-shrink-0 h-14 border-b border-slate-200 dark:border-slate-700 flex items-center px-3 bg-white/95 dark:bg-slate-800/95 backdrop-blur-md z-10">
+                  <button onClick={() => setSelectedChatId(null)} className="md:hidden p-1.5 -ml-1 text-blue-600 transition">
+                      <ChevronLeft size={24} />
+                  </button>
+                  <div className="flex items-center gap-3 ml-1 flex-1 min-w-0">
+                      <div className={`w-9 h-9 rounded-full flex-shrink-0 flex items-center justify-center ${selectedGroup ? 'bg-indigo-100 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>
+                          {selectedGroup ? <UsersIcon size={18} /> : <UserIcon size={18} />}
+                      </div>
+                      <div className="min-w-0">
+                          <div className="font-bold text-slate-900 dark:text-slate-100 truncate text-sm leading-tight">
+                              {selectedGroup ? selectedGroup.name : (selectedUser ? `${selectedUser.firstName} ${selectedUser.lastName}` : 'Loading...')}
+                          </div>
+                          <div className="text-[10px] text-slate-500 dark:text-slate-400 font-medium truncate">
+                              {selectedGroup ? `${selectedGroup.memberIds.length} members` : (selectedUser?.role || 'Dispatcher')}
+                          </div>
+                      </div>
+                  </div>
+              </div>
+
+              {/* SCROLLABLE MESSAGE LIST - Compact WhatsApp Style */}
+              <div 
+                  ref={scrollRef}
+                  className="flex-1 overflow-y-auto px-3 py-4 space-y-1.5 no-scrollbar"
+              >
+                  {conversation.length === 0 && (
+                    <div className="h-full flex items-center justify-center py-10 opacity-50">
+                      <span className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-white dark:bg-slate-800 px-4 py-1.5 rounded-full border border-slate-100 dark:border-slate-700">Safe Environment</span>
+                    </div>
+                  )}
+                  {conversation.map((msg, idx) => { 
+                      const isMe = msg.fromUserId === currentUser.id; 
+                      const sender = selectedGroup && !isMe ? data.users.find(u => u.id === msg.fromUserId) : null;
+                      const showSenderName = selectedGroup && !isMe && (idx === 0 || conversation[idx-1].fromUserId !== msg.fromUserId);
+                      
+                      return ( 
+                          <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-fadeIn`}>
+                              <div className={`max-w-[85%] md:max-w-[70%] px-2.5 py-1.5 rounded-lg shadow-sm text-[13.5px] leading-[1.3] relative ${
+                                  isMe 
+                                  ? 'bg-[#DCF8C6] dark:bg-blue-800 text-slate-900 dark:text-slate-100' 
+                                  : 'bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+                              }`}>
+                                  {showSenderName && (
+                                    <div className={`text-[11px] font-bold mb-0.5 ${getNameColor(msg.fromUserId)}`}>
+                                      {sender?.firstName} {sender?.lastName}
+                                    </div>
+                                  )}
+                                  <div className="inline-block pr-10">{msg.content}</div>
+                                  <div className={`text-[9px] font-medium absolute bottom-1 right-1.5 opacity-50 ${isMe ? 'text-green-800 dark:text-blue-100' : 'text-slate-400'}`}>
+                                      {new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                  </div>
+                              </div>
+                          </div> 
+                      ); 
+                  })}
+              </div>
+
+              {/* STUCK INPUT BAR - iOS Style */}
+              <div className="flex-shrink-0 bg-white/95 dark:bg-slate-800/95 border-t border-slate-200 dark:border-slate-700 p-2 pb-[calc(env(safe-area-inset-bottom)+72px)] md:pb-3">
+                  <form onSubmit={handleSend} className="flex gap-2 max-w-4xl mx-auto items-end">
+                      <div className="flex-1 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-center px-1">
+                          <textarea 
+                              rows={1}
+                              value={msgContent} 
+                              onChange={e => setMsgContent(e.target.value)} 
+                              placeholder="Message" 
+                              className="flex-1 bg-transparent border-none py-2 px-3 focus:ring-0 outline-none text-slate-900 dark:text-slate-100 text-sm font-medium resize-none max-h-32" 
+                              onKeyDown={(e) => {
+                                  if (e.key === 'Enter' && !e.shiftKey) {
+                                      e.preventDefault();
+                                      handleSend(e as any);
+                                  }
+                              }}
+                          />
+                      </div>
+                      <button 
+                          type="submit" 
+                          disabled={!msgContent.trim()} 
+                          className="bg-blue-600 hover:bg-blue-700 text-white w-9 h-9 rounded-full disabled:opacity-40 transition-all flex items-center justify-center flex-shrink-0"
+                      >
+                          <Send size={18} strokeWidth={2.5} className="ml-0.5" />
+                      </button>
+                  </form>
+              </div>
             </div>
-        )}
+          )}
+        </div>
       </div>
-      <div className={`flex-1 flex flex-col ${!selectedChatId ? 'hidden md:flex' : 'flex'}`}>
-        {!selectedChatId ? (<div className="flex-1 flex items-center justify-center text-slate-400 dark:text-slate-500 bg-slate-50/50 dark:bg-slate-800/50"><div className="text-center"><MessageSquare size={48} className="mx-auto mb-4 opacity-20" /><p>Select a chat to start messaging</p></div></div>) : (
-          <><div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-white dark:bg-slate-800 shadow-sm z-10"><div className="flex items-center gap-3"><div className={`p-2 rounded-full ${isSelectedGroup ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-600 dark:text-purple-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}>{isSelectedGroup ? <UsersIcon size={20} /> : <UserIcon size={20} />}</div><div><div className="font-bold text-slate-800 dark:text-slate-100">{isSelectedGroup ? selectedGroup?.name : `${selectedUser?.firstName} ${selectedUser?.lastName}`}</div><div className="text-xs text-slate-500 dark:text-slate-400">{isSelectedGroup ? `${selectedGroup?.memberIds.length} Members` : selectedUser?.role}</div></div></div><button onClick={() => setSelectedChatId(null)} className="md:hidden text-sm text-blue-600 dark:text-blue-400 font-medium bg-blue-50 dark:bg-blue-900/50 px-3 py-1 rounded-full">Back</button></div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-slate-50 dark:bg-slate-900">{conversation.length === 0 && <p className="text-center text-slate-400 text-sm mt-4">No messages yet.</p>}{conversation.map(msg => { const isMe = msg.fromUserId === currentUser.id; const sender = isSelectedGroup && !isMe ? data.users.find(u => u.id === msg.fromUserId) : null; return ( <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>{sender && <span className="text-[10px] text-slate-400 mb-1 ml-1">{sender.firstName} {sender.lastName}</span>}<div className={`max-w-[75%] p-3 rounded-2xl text-sm shadow-sm ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-white dark:bg-slate-700 border border-slate-200 dark:border-slate-600 text-slate-800 dark:text-slate-200 rounded-bl-none'}`}>{msg.content}<div className={`text-[10px] mt-1 text-right ${isMe ? 'text-blue-200' : 'text-slate-400'}`}>{new Date(msg.timestamp).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div></div> ); })}</div>
-            <form onSubmit={handleSend} className="p-4 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 flex gap-2"><input type="text" value={msgContent} onChange={e => setMsgContent(e.target.value)} placeholder={isSelectedGroup ? `Message ${selectedGroup?.name}...` : "Type a message..."} className="flex-1 px-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-full focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50" /><button type="submit" disabled={!msgContent.trim()} className="bg-blue-600 text-white p-2 rounded-full hover:bg-blue-700 disabled:opacity-50 transition shadow-sm"><Send size={20} /></button></form>
-          </>)}
-      </div>
+
+      {/* New Chat Overlay */}
+      {isNewChatOpen && (
+          <div className="absolute inset-0 bg-white dark:bg-slate-800 z-50 flex flex-col">
+              <div className="p-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-3">
+                  <div className="relative flex-1">
+                      <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
+                      <input type="text" autoFocus placeholder="Search teammates..." className="w-full bg-slate-100 dark:bg-slate-700 border-none rounded-xl pl-9 pr-3 py-2 text-sm focus:ring-1 focus:ring-blue-500 outline-none" value={newChatSearch} onChange={e => setNewChatSearch(e.target.value)} />
+                  </div>
+                  <button onClick={() => setIsNewChatOpen(false)} className="text-blue-600 font-medium text-sm">Cancel</button>
+              </div>
+              <div className="flex-1 overflow-y-auto divide-y divide-slate-50 dark:divide-slate-700/50">
+                  {myGroups.filter(g => g.name.toLowerCase().includes(newChatSearch.toLowerCase())).map(g => (
+                      <button key={g.id} onClick={() => handleSelectChat(g.id)} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3">
+                          <div className="w-10 h-10 bg-indigo-100 dark:bg-indigo-900/50 rounded-full flex items-center justify-center text-indigo-600"><UsersIcon size={18} /></div>
+                          <div><div className="font-bold text-slate-800 dark:text-slate-200 text-sm">{g.name}</div><div className="text-[11px] text-slate-500 uppercase font-bold tracking-tight">Group</div></div>
+                      </button>
+                  ))}
+                  {validUsers.filter(u => `${u.firstName} ${u.lastName}`.toLowerCase().includes(newChatSearch.toLowerCase())).map(u => (
+                      <button key={u.id} onClick={() => handleSelectChat(u.id)} className="w-full text-left px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-700 flex items-center gap-3">
+                          <div className="w-10 h-10 bg-slate-100 dark:bg-slate-700 rounded-full flex items-center justify-center text-slate-500"><UserIcon size={18} /></div>
+                          <div><div className="font-bold text-slate-800 dark:text-slate-200 text-sm">{u.firstName} {u.lastName}</div><div className="text-[11px] text-slate-500 uppercase font-bold tracking-tight">{u.role}</div></div>
+                      </button>
+                  ))}
+              </div>
+          </div>
+      )}
     </div>
   );
 };

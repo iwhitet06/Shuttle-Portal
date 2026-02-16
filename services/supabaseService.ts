@@ -1,3 +1,4 @@
+
 import { createClient } from '@supabase/supabase-js';
 import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType, Group } from '../types';
 
@@ -100,12 +101,26 @@ const mapMessage = (data: any): Message => ({
   isRead: data.is_read
 });
 
-const mapGroup = (data: any): Group => ({
-  id: data.id,
-  name: data.name,
-  createdByUserId: data.created_by,
-  memberIds: data.member_ids || []
-});
+const mapGroup = (data: any): Group => {
+    let members: string[] = [];
+    if (Array.isArray(data.member_ids)) {
+        members = data.member_ids;
+    } else if (typeof data.member_ids === 'string') {
+        try {
+            members = JSON.parse(data.member_ids);
+        } catch (e) {
+            console.error("Failed to parse member_ids for group", data.id);
+            members = [];
+        }
+    }
+
+    return {
+        id: data.id,
+        name: data.name,
+        createdByUserId: data.created_by,
+        memberIds: members
+    };
+};
 
 export const loadData = async (): Promise<AppData> => {
   const [users, locations, logs, checkins, messages, groups] = await Promise.all([
@@ -305,9 +320,8 @@ export const createGroup = async (name: string, creatorId: string, memberIds: st
  * leaveGroup
  * 
  * Removes a user from a group's member_ids list.
- * CRITICAL: We DO NOT delete the group even if it becomes empty, because
- * the 'messages' table has a foreign key constraint on public.groups(id).
- * Deleting the group would fail if there are any messages linked to it.
+ * Safe operation: Does NOT delete group to prevent foreign key issues.
+ * Handles JSONB parsing differences (array vs string).
  */
 export const leaveGroup = async (groupId: string, userId: string) => {
     // 1. Fetch the group to get current members
@@ -316,27 +330,48 @@ export const leaveGroup = async (groupId: string, userId: string) => {
         .select('member_ids')
         .eq('id', groupId);
         
-    if (fetchError) throw fetchError;
-    if (!groups || groups.length === 0) return true;
+    if (fetchError) {
+        console.error("Error fetching group to leave:", fetchError);
+        throw fetchError;
+    }
+    
+    if (!groups || groups.length === 0) return true; // Group doesn't exist? Consider it left.
 
     const group = groups[0];
-    const currentMembers = Array.isArray(group.member_ids) ? group.member_ids : [];
     
-    // Normalize IDs for precise filtering
+    // 2. Parse members safely (handle if Supabase returns string or array)
+    let currentMembers: any[] = [];
+    if (Array.isArray(group.member_ids)) {
+        currentMembers = group.member_ids;
+    } else if (typeof group.member_ids === 'string') {
+        try {
+            currentMembers = JSON.parse(group.member_ids);
+        } catch (e) {
+            console.warn("Failed to parse member_ids JSON:", group.member_ids);
+            currentMembers = [];
+        }
+    }
+    
+    // 3. Normalize IDs for precise filtering
     const normalizedUserId = String(userId).toLowerCase().trim();
     const updatedMembers = currentMembers.filter((id: any) => {
         if (!id) return false;
         return String(id).toLowerCase().trim() !== normalizedUserId;
     });
 
-    // 2. Only update if the user was actually in the list
+    // 4. Update if changes detected
     if (updatedMembers.length < currentMembers.length) {
         const { error: updError } = await supabase
             .from('groups')
             .update({ member_ids: updatedMembers })
             .eq('id', groupId);
             
-        if (updError) throw updError;
+        if (updError) {
+            console.error("Error updating group members:", updError);
+            throw updError;
+        }
+    } else {
+        console.log("User not found in group members list, treating as success.");
     }
     
     return true;

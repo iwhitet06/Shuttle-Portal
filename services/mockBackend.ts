@@ -1,4 +1,4 @@
-import { User, Location, LogEntry, Message, UserRole, UserStatus, LocationType, AppData, TripStatus, UserPermissions, BusCheckIn, Group } from '../types';
+import { User, Location, LogEntry, Message, UserRole, UserStatus, LocationType, AppData, TripStatus, UserPermissions, BusCheckIn, Group, ScheduledTrip } from '../types';
 
 const STORAGE_KEY = 'transitflow_db_v2';
 
@@ -47,6 +47,11 @@ export const loadData = (): AppData => {
       parsed.groups = [];
     }
     
+    // Fix: Ensure scheduledTrips exists during migration/load
+    if (!parsed.scheduledTrips) {
+      parsed.scheduledTrips = [];
+    }
+    
     // Fallback if locations missing (dev convenience)
     if (!parsed.locations || parsed.locations.length === 0) {
         // In a real app we wouldn't overwrite, but for this mock we want data
@@ -54,11 +59,14 @@ export const loadData = (): AppData => {
     }
     return parsed;
   }
+  
+  // Fix: Added missing scheduledTrips to satisfy AppData interface
   return {
     users: [],
     locations: INITIAL_LOCATIONS,
     logs: [],
     busCheckIns: [],
+    scheduledTrips: [],
     groups: [],
     messages: [],
     currentUser: null,

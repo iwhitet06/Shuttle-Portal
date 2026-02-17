@@ -1,6 +1,5 @@
-
 import { createClient } from '@supabase/supabase-js';
-import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType, Group } from '../types';
+import { AppData, User, Location, LogEntry, BusCheckIn, Message, UserRole, UserStatus, LocationType, TripStatus, UserPermissions, RouteType, Group, ScheduledTrip } from '../types';
 
 // Initialize Supabase Client
 const getEnvVar = (key: string, fallback: string = '') => {
@@ -21,6 +20,36 @@ const supabaseAnonKey = getEnvVar('VITE_SUPABASE_ANON_KEY', 'eyJhbGciOiJIUzI1NiI
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // --- HELPER FUNCTIONS ---
+
+const parseCSVLine = (text: string): string[][] => {
+  const result: string[][] = [];
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const row: string[] = [];
+    let cur = '';
+    let inQuote = false;
+    for (let i = 0; i < line.length; i++) {
+      const char = line[i];
+      if (char === '"') {
+        if (inQuote && i + 1 < line.length && line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuote = !inQuote;
+        }
+      } else if (char === ',' && !inQuote) {
+        row.push(cur.trim());
+        cur = '';
+      } else {
+        cur += char;
+      }
+    }
+    row.push(cur.trim());
+    result.push(row);
+  }
+  return result;
+};
 
 const mapUser = (data: any): User => {
   if (data.phone === '000-000-0000') {
@@ -122,83 +151,261 @@ const mapGroup = (data: any): Group => {
     };
 };
 
+// --- DATA LOADING ---
+
 export const loadData = async (): Promise<AppData> => {
-  const [users, locations, logs, checkins, messages, groups] = await Promise.all([
+  const safeFetchRawSchedule = async () => {
+      try {
+          const res = await supabase.from('scheduled_trips').select('*');
+          if (res.error) throw res.error;
+          return res.data || [];
+      } catch (e) {
+          return [];
+      }
+  };
+
+  const [users, locations, logs, checkins, messages, groups, rawSchedule] = await Promise.all([
     supabase.from('users').select('*').order('last_name', { ascending: true }),
     supabase.from('locations').select('*').order('name'),
     supabase.from('logs').select('*').order('timestamp', { ascending: false }),
     supabase.from('bus_checkins').select('*').order('timestamp', { ascending: false }),
     supabase.from('messages').select('*').order('timestamp', { ascending: true }),
-    supabase.from('groups').select('*')
+    supabase.from('groups').select('*'),
+    safeFetchRawSchedule()
   ]);
+
+  const mappedLocations = (locations.data || []).map(mapLocation);
+  const processedScheduledTrips: ScheduledTrip[] = [];
+  const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  
+  const findLocId = (name: string | null) => {
+      if (!name) return null;
+      const clean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const exact = mappedLocations.find(l => l.name.toLowerCase().replace(/[^a-z0-9]/g, '') === clean);
+      if (exact) return exact.id;
+      return mappedLocations.find(l => l.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(clean) || clean.includes(l.name.toLowerCase().replace(/[^a-z0-9]/g, '')))?.id;
+  };
+
+  rawSchedule.forEach((row: any) => {
+      const hotelId = findLocId(row.hotel);
+      const worksiteId = findLocId(row.worksite);
+
+      if (hotelId && worksiteId) {
+          daysOfWeek.forEach(day => {
+              processedScheduledTrips.push({
+                  id: `${row.id}_${day}`,
+                  dayOfWeek: day,
+                  departLocationId: hotelId,
+                  arrivalLocationId: worksiteId,
+                  vehicleCount: row.vehicle_count || 1,
+                  vehicleType: row.vehicle_type || 'Bus',
+                  shiftStartTime: row.shift_start_time || '',
+                  pmShiftStartTime: row.pm_shift_start_time || '', // Load PM shift time
+                  busArrivalAtHotel: row.bus_arrival_at_hotel || '',
+                  boardingBeginsAtHotel: row.boarding_begins_at_hotel || '',
+                  beOnCurbAtHotel: row.be_on_curb_at_hotel || '',
+                  hotelDepartureTime: row.hotel_departure_time || '', 
+                  busArrivalAtWorksite: row.bus_arrival_at_worksite || '',
+                  busStageTimeAtWorksite: row.bus_stage_time_at_worksite || '',
+                  worksiteDepartureTime: row.worksite_departure_time || '',
+                  busArrivalAtHotelReturn: row.bus_arrival_at_hotel_return || '',
+                  amCrId: row.am_cr_id || '',
+                  pmCrId: row.pm_cr_id || '',
+                  notes: row.trip_comment || '',
+                  isActive: row.manual_status !== 'CANCELLED',
+                  manualStatus: row.manual_status || undefined,
+                  manualStatusPax: row.manual_status_pax || undefined
+              });
+          });
+      }
+  });
 
   return {
     users: (users.data || []).map(mapUser),
-    locations: (locations.data || []).map(mapLocation),
+    locations: mappedLocations,
     logs: (logs.data || []).map(mapLogEntry),
     busCheckIns: (checkins.data || []).map(mapBusCheckIn),
+    scheduledTrips: processedScheduledTrips,
     messages: (messages.data || []).map(mapMessage),
     groups: (groups.data || []).map(mapGroup),
     currentUser: null
   };
 };
 
-export const registerUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
-  // Security: Sanitize inputs to prevent SQL wildcard injection
-  const safeFirst = firstName.replace(/[%_]/g, '').trim();
-  const safeLast = lastName.replace(/[%_]/g, '').trim();
+export const syncScheduledTripsFromCSV = async (csvUrl: string) => {
+    try {
+        let targetUrl = csvUrl.trim();
+        if (targetUrl.includes('docs.google.com/spreadsheets')) {
+            if (targetUrl.includes('/edit')) { targetUrl = targetUrl.split('/edit')[0] + '/pub?output=csv'; } 
+            else if (!targetUrl.includes('output=csv')) { targetUrl += (targetUrl.includes('?') ? '&' : '?') + 'output=csv'; }
+        }
+
+        const response = await fetch(targetUrl).catch(err => { throw new Error(`Connection Error: ${err.message}`); });
+        if (!response.ok) throw new Error(`HTTP Error ${response.status}`);
+        
+        const csvText = await response.text();
+        const rows = parseCSVLine(csvText);
+        if (rows.length < 2) throw new Error("CSV appears empty.");
+
+        const header = rows[0].map(h => h.toLowerCase().trim());
+        const dataRows = rows.slice(1);
+
+        // Helper to find column indices flexibly
+        const getIdx = (candidates: string[]) => header.findIndex(h => candidates.some(c => h.includes(c.toLowerCase())));
+        
+        const idxHotel = getIdx(['hotel']);
+        const idxWorksite = getIdx(['worksite']);
+        const idxVehicleCount = header.findIndex(h => (h.includes('vehicle') && h.includes('count')) || h === 'vehicle count');
+        const idxVehicleType = header.findIndex(h => h.includes('vehicle type') || h === 'vehicle');
+        const idxShiftStart = getIdx(['shift start time']);
+        const idxBoardingBegins = getIdx(['boarding begins']);
+        const idxBeOnCurb = getIdx(['be on curb']);
+        const idxHotelDeparture = getIdx(['departure time']);
+        const idxBusArrivalWorksite = getIdx(['bus arrival at worksite']);
+        const idxBusStageTime = getIdx(['bus stage time']);
+        const idxWorksiteDeparture = getIdx(['bus departure time from worksite', 'bus departure time']);
+        
+        // Handle potentially multiple "Bus Arrival at Hotel" columns (one for AM start, one for PM return)
+        const allArrivalIndices = header.reduce((acc, h, i) => h.includes('bus arrival at hotel') ? [...acc, i] : acc, [] as number[]);
+        const idxBusArrivalHotelStart = allArrivalIndices.length > 0 ? allArrivalIndices[0] : -1;
+        const idxBusArrivalHotelEnd = allArrivalIndices.length > 1 ? allArrivalIndices[1] : -1;
+        
+        const idxNotes = getIdx(['trip comment', 'notes']);
+        const realIdxCrAm = header.findIndex(h => h.includes('id cr') && h.includes('am'));
+        const realIdxCrPm = header.findIndex(h => h.includes('id cr') && h.includes('pm'));
+
+        if (idxHotel === -1 || idxWorksite === -1) throw new Error("Missing required columns: 'Hotel' and 'Worksite'.");
+
+        // Fetch current schedule to perform merge
+        const { data: existingTrips } = await supabase.from('scheduled_trips').select('*');
+        const currentSchedule = existingTrips || [];
+        const mergedRecords: Map<string, any> = new Map();
+
+        // 1. Load existing records into the merge map to preserve data from previous syncs
+        currentSchedule.forEach(t => {
+            // Key: Hotel|Worksite|VehicleType (normalized)
+            const key = `${t.hotel}|${t.worksite}|${t.vehicle_type}`.toLowerCase().trim();
+            mergedRecords.set(key, t);
+        });
+
+        // 2. Overlay new data from the CSV
+        dataRows.forEach((row) => {
+            if (row.length < 2) return;
+            const hotel = row[idxHotel] || '';
+            const worksite = row[idxWorksite] || '';
+            const vType = idxVehicleType !== -1 ? row[idxVehicleType] : 'Bus';
+            
+            // Create a unique key for this route leg
+            const key = `${hotel}|${worksite}|${vType}`.toLowerCase().trim();
+            
+            // Get existing record or initialize new one
+            const existing = mergedRecords.get(key) || { 
+                hotel, 
+                worksite, 
+                vehicle_type: vType, 
+                vehicle_count: 1,
+                manual_status: null 
+            };
+            
+            // Always update vehicle count if present
+            if (idxVehicleCount !== -1) existing.vehicle_count = parseInt(row[idxVehicleCount]) || 1;
+
+            // Determine if this row looks like an AM trip (has hotel departure) or PM trip (has worksite departure)
+            const hasHotelDep = idxHotelDeparture !== -1 && row[idxHotelDeparture] && row[idxHotelDeparture].trim() !== '';
+            const hasWorksiteDep = idxWorksiteDeparture !== -1 && row[idxWorksiteDeparture] && row[idxWorksiteDeparture].trim() !== '';
+
+            // Map Shift Start Time appropriately
+            if (idxShiftStart !== -1 && row[idxShiftStart]) {
+                if (hasHotelDep) {
+                    existing.shift_start_time = row[idxShiftStart];
+                } else if (hasWorksiteDep) {
+                    existing.pm_shift_start_time = row[idxShiftStart];
+                } else {
+                    // Fallback: If unambiguous (only one shift start logic?), default to AM
+                    existing.shift_start_time = row[idxShiftStart];
+                }
+            }
+
+            // Update AM specific fields
+            if (idxBusArrivalHotelStart !== -1 && row[idxBusArrivalHotelStart]) existing.bus_arrival_at_hotel = row[idxBusArrivalHotelStart];
+            if (idxBoardingBegins !== -1 && row[idxBoardingBegins]) existing.boarding_begins_at_hotel = row[idxBoardingBegins];
+            if (idxBeOnCurb !== -1 && row[idxBeOnCurb]) existing.be_on_curb_at_hotel = row[idxBeOnCurb];
+            if (idxHotelDeparture !== -1 && row[idxHotelDeparture]) existing.hotel_departure_time = row[idxHotelDeparture];
+            if (idxBusArrivalWorksite !== -1 && row[idxBusArrivalWorksite]) existing.bus_arrival_at_worksite = row[idxBusArrivalWorksite];
+            
+            // Update PM specific fields
+            if (idxBusStageTime !== -1 && row[idxBusStageTime]) existing.bus_stage_time_at_worksite = row[idxBusStageTime];
+            if (idxWorksiteDeparture !== -1 && row[idxWorksiteDeparture]) existing.worksite_departure_time = row[idxWorksiteDeparture];
+            if (idxBusArrivalHotelEnd !== -1 && row[idxBusArrivalHotelEnd]) existing.bus_arrival_at_hotel_return = row[idxBusArrivalHotelEnd];
+            
+            if (realIdxCrAm !== -1 && row[realIdxCrAm]) existing.am_cr_id = row[realIdxCrAm];
+            if (realIdxCrPm !== -1 && row[realIdxCrPm]) existing.pm_cr_id = row[realIdxCrPm];
+            if (idxNotes !== -1 && row[idxNotes]) existing.trip_comment = row[idxNotes];
+
+            mergedRecords.set(key, existing);
+        });
+
+        const finalRecords = Array.from(mergedRecords.values()).map(r => {
+            // Remove system fields to prevent conflicts on re-insert
+            const { id, created_at, ...rest } = r;
+            return rest;
+        });
+
+        if (finalRecords.length === 0) throw new Error("No valid records found to sync.");
+
+        // Clear existing (except special placeholder if any) and re-insert merged records
+        await supabase.from('scheduled_trips').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        const { error } = await supabase.from('scheduled_trips').insert(finalRecords);
+        
+        if (error) throw error;
+        return true;
+    } catch (err: any) { throw err; }
+};
+
+export const loginUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
+  const safeFirst = firstName.trim();
+  const safeLast = lastName.trim();
   const safePhone = phone.trim();
-
   if (!safeFirst || !safeLast || !safePhone) return null;
+  const { data, error } = await supabase.from('users').select('*').ilike('first_name', safeFirst).ilike('last_name', safeLast).eq('phone', safePhone).maybeSingle();
+  if (error || !data) return null;
+  return mapUser(data);
+};
 
+export const registerUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
+  const safeFirst = firstName.trim();
+  const safeLast = lastName.trim();
+  const safePhone = phone.trim();
   const isSystemAdmin = safePhone === '000-000-0000';
-  const newUser = {
-    first_name: safeFirst,
-    last_name: safeLast,
-    phone: safePhone,
-    role: isSystemAdmin ? UserRole.ADMIN : UserRole.AGENT,
-    status: isSystemAdmin ? UserStatus.ACTIVE : UserStatus.PENDING,
-    permissions: { canViewHistory: true, canLogTrips: true }
+  const newUser = { 
+      first_name: safeFirst, 
+      last_name: safeLast, 
+      phone: safePhone, 
+      role: isSystemAdmin ? 'ADMIN' : 'AGENT', 
+      status: isSystemAdmin ? 'ACTIVE' : 'PENDING', 
+      permissions: { canViewHistory: true, canLogTrips: true } 
   };
   const { data, error } = await supabase.from('users').insert([newUser]).select().single();
   if (error) return null;
   return mapUser(data);
 };
 
-export const loginUser = async (firstName: string, lastName: string, phone: string): Promise<User | null> => {
-  // Security: Sanitize inputs to prevent SQL wildcard injection
-  // Without this, a user entering "%" as first/last name could log in as the first user (Admin)
-  const safeFirst = firstName.replace(/[%_]/g, '').trim();
-  const safeLast = lastName.replace(/[%_]/g, '').trim();
-  const safePhone = phone.trim();
+export const clearScheduledTrips = async () => {
+    const { error } = await supabase.from('scheduled_trips').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    if (error) throw error;
+};
 
-  if (!safeFirst || !safeLast || !safePhone) return null;
-
-  const { data, error } = await supabase.from('users').select('*')
-    .ilike('first_name', safeFirst)
-    .ilike('last_name', safeLast)
-    .eq('phone', safePhone)
-    .maybeSingle();
-  
-  if (error || !data) return null;
-  return mapUser(data);
+export const updateScheduledTripStatus = async (tripId: string, status: string | null, pax?: number) => {
+  const rowId = tripId.split('_')[0];
+  const { error } = await supabase.from('scheduled_trips').update({ 
+      manual_status: status,
+      manual_status_pax: pax 
+  }).eq('id', rowId);
+  if (error) throw error;
 };
 
 export const createLog = async (entry: Omit<LogEntry, 'id' | 'timestamp' | 'status'>) => {
-  const dbEntry = {
-    user_id: entry.userId,
-    route_type: entry.routeType,
-    depart_location_id: entry.departLocationId,
-    arrival_location_id: entry.arrivalLocationId,
-    driver_name: entry.driverName,
-    company_name: entry.companyName,
-    bus_number: entry.busNumber,
-    passenger_count: entry.passengerCount,
-    eta: entry.eta,
-    notes: entry.notes,
-    status: TripStatus.IN_TRANSIT,
-    timestamp: new Date().toISOString()
-  };
+  const dbEntry = { user_id: entry.userId, route_type: entry.routeType, depart_location_id: entry.departLocationId, arrival_location_id: entry.arrivalLocationId, driver_name: entry.driverName, company_name: entry.companyName, bus_number: entry.busNumber, passenger_count: entry.passengerCount, eta: entry.eta, notes: entry.notes, status: TripStatus.IN_TRANSIT, timestamp: new Date().toISOString() };
   await supabase.from('logs').insert([dbEntry]);
 };
 
@@ -215,20 +422,11 @@ export const updateLog = async (logId: string, updates: Partial<LogEntry>) => {
 };
 
 export const deleteLog = async (logId: string) => {
-  const { error } = await supabase.from('logs').delete().eq('id', logId);
-  if (error) throw error;
-  return true;
+  await supabase.from('logs').delete().eq('id', logId);
 };
 
 export const createBusCheckIn = async (entry: Omit<BusCheckIn, 'id' | 'timestamp'>) => {
-  const dbEntry = {
-    user_id: entry.userId,
-    location_id: entry.locationId,
-    driver_name: entry.driverName,
-    company_name: entry.companyName,
-    bus_number: entry.busNumber,
-    timestamp: new Date().toISOString()
-  };
+  const dbEntry = { user_id: entry.userId, location_id: entry.locationId, driver_name: entry.driverName, company_name: entry.companyName, bus_number: entry.busNumber, timestamp: new Date().toISOString() };
   await supabase.from('bus_checkins').insert([dbEntry]);
 };
 
@@ -237,9 +435,7 @@ export const updateBusCheckIn = async (id: string, timestamp: string) => {
 };
 
 export const deleteBusCheckIn = async (id: string) => {
-  const { error } = await supabase.from('bus_checkins').delete().eq('id', id);
-  if (error) throw error;
-  return true;
+  await supabase.from('bus_checkins').delete().eq('id', id);
 };
 
 export const markTripArrived = async (logId: string) => {
@@ -267,28 +463,9 @@ export const updateUserRole = async (userId: string, role: UserRole) => {
 
 export const updateUserProfile = async (userId: string, updates: { currentLocationId?: string | null, assignedWorksiteIds?: string[] }) => {
   const dbUpdates: any = {};
-  if (updates.currentLocationId !== undefined) {
-      dbUpdates.current_location_id = updates.currentLocationId;
-  }
-  
-  if (updates.assignedWorksiteIds !== undefined) {
-      dbUpdates.assigned_worksite_ids = updates.assignedWorksiteIds;
-      dbUpdates.assigned_worksite_id = (updates.assignedWorksiteIds && updates.assignedWorksiteIds.length > 0) ? updates.assignedWorksiteIds[0] : null;
-  }
-  
-  try {
-      const { error } = await supabase.from('users').update(dbUpdates).eq('id', userId);
-      if (error) throw error;
-  } catch (err: any) {
-      if (updates.assignedWorksiteIds !== undefined && (err.message?.includes('assigned_worksite_ids') || err.code === '42703')) {
-          delete dbUpdates.assigned_worksite_ids;
-          dbUpdates.assigned_worksite_id = (updates.assignedWorksiteIds && updates.assignedWorksiteIds.length > 0) ? updates.assignedWorksiteIds[0] : null;
-          const { error: legacyError } = await supabase.from('users').update(dbUpdates).eq('id', userId);
-          if (legacyError) throw legacyError;
-      } else {
-          throw err;
-      }
-  }
+  if (updates.currentLocationId !== undefined) dbUpdates.current_location_id = updates.currentLocationId;
+  if (updates.assignedWorksiteIds !== undefined) dbUpdates.assigned_worksite_ids = updates.assignedWorksiteIds;
+  await supabase.from('users').update(dbUpdates).eq('id', userId);
 };
 
 export const toggleUserPermission = async (userId: string, permission: keyof UserPermissions) => {
@@ -311,9 +488,7 @@ export const updateUserAllowedLocations = async (userId: string, locationIds: st
 
 export const toggleLocation = async (locationId: string) => {
   const { data } = await supabase.from('locations').select('is_active').eq('id', locationId).single();
-  if (data) {
-    await supabase.from('locations').update({ is_active: !data.is_active }).eq('id', locationId);
-  }
+  if (data) await supabase.from('locations').update({ is_active: !data.is_active }).eq('id', locationId);
 };
 
 export const addLocation = async (name: string, type: LocationType, address?: string) => {
@@ -337,73 +512,26 @@ export const createGroup = async (name: string, creatorId: string, memberIds: st
 };
 
 export const leaveGroup = async (groupId: string, userId: string) => {
-    // 1. Fetch the group to get current members
-    const { data: groups, error: fetchError } = await supabase
-        .from('groups')
-        .select('member_ids')
-        .eq('id', groupId);
-        
-    if (fetchError) {
-        console.error("Error fetching group to leave:", fetchError);
-        throw fetchError;
-    }
-    
-    if (!groups || groups.length === 0) return true; // Group doesn't exist? Consider it left.
-
+    const { data: groups, error: fetchError } = await supabase.from('groups').select('member_ids').eq('id', groupId);
+    if (fetchError || !groups || groups.length === 0) return true;
     const group = groups[0];
-    
-    // 2. Parse members safely (handle if Supabase returns string or array)
-    let currentMembers: any[] = [];
-    if (Array.isArray(group.member_ids)) {
-        currentMembers = group.member_ids;
-    } else if (typeof group.member_ids === 'string') {
-        try {
-            currentMembers = JSON.parse(group.member_ids);
-        } catch (e) {
-            console.warn("Failed to parse member_ids JSON:", group.member_ids);
-            currentMembers = [];
-        }
-    }
-    
-    // 3. Normalize IDs for precise filtering
+    let currentMembers: any[] = Array.isArray(group.member_ids) ? group.member_ids : (typeof group.member_ids === 'string' ? JSON.parse(group.member_ids) : []);
     const normalizedUserId = String(userId).toLowerCase().trim();
-    const updatedMembers = currentMembers.filter((id: any) => {
-        if (!id) return false;
-        return String(id).toLowerCase().trim() !== normalizedUserId;
-    });
-
-    // 4. Update if changes detected
-    if (updatedMembers.length < currentMembers.length) {
-        const { error: updError } = await supabase
-            .from('groups')
-            .update({ member_ids: updatedMembers })
-            .eq('id', groupId);
-            
-        if (updError) {
-            console.error("Error updating group members:", updError);
-            throw updError;
-        }
-    } else {
-        console.log("User not found in group members list, treating as success.");
-    }
-    
+    const updatedMembers = currentMembers.filter((id: any) => String(id).toLowerCase().trim() !== normalizedUserId);
+    if (updatedMembers.length < currentMembers.length) await supabase.from('groups').update({ member_ids: updatedMembers }).eq('id', groupId);
     return true;
 };
 
 export const cleanupStaleTrips = async () => {
-  const { data: activeTrips, error } = await supabase.from('logs').select('*').eq('status', TripStatus.IN_TRANSIT);
-  if (error || !activeTrips || activeTrips.length === 0) return;
+  const { data: activeTrips } = await supabase.from('logs').select('*').eq('status', TripStatus.IN_TRANSIT);
+  if (!activeTrips || activeTrips.length === 0) return;
   const pstNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
   const pstTodayMidnight = new Date(pstNow);
   pstTodayMidnight.setHours(0, 0, 0, 0);
   const updates = activeTrips.map(async (trip) => {
     const tripTimePST = new Date(new Date(trip.timestamp).toLocaleString("en-US", { timeZone: "America/Los_Angeles" }));
     if (tripTimePST < pstTodayMidnight) {
-       await supabase.from('logs').update({ 
-           status: TripStatus.ARRIVED,
-           actual_arrival_time: new Date().toISOString(),
-           notes: trip.notes ? trip.notes + " [Auto-closed]" : "[Auto-closed]"
-       }).eq('id', trip.id);
+       await supabase.from('logs').update({ status: TripStatus.ARRIVED, actual_arrival_time: new Date().toISOString(), notes: trip.notes ? trip.notes + " [Auto-closed]" : "[Auto-closed]" }).eq('id', trip.id);
     }
   });
   await Promise.all(updates);

@@ -1,207 +1,232 @@
-
-import React, { useState } from 'react';
-import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry, UserPermissions } from '../types';
-import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog, deleteBusCheckIn, updateUserProfile } from '../services/supabaseService';
-import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, Eye, EyeOff, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, Search, Download, X, Plus, Building, Edit2, Save, ArrowDownCircle, History, FileText, ChevronRight, ChevronDown, Lock, Server, Trash2, ShieldCheck, CheckSquare, Square, Briefcase } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from 'recharts';
+import React, { useState, Component, ReactNode, useMemo } from 'react';
+import { AppData, User, UserStatus, UserRole, Location, TripStatus, RouteType, LocationType, LogEntry, ScheduledTrip, BusCheckIn, UserPermissions } from '../types';
+import { updateUserStatus, updateUserRole, toggleUserPermission, toggleLocation, addLocation, updateLocation, updateUserAllowedLocations, deleteLog, updateLog, deleteBusCheckIn, updateUserProfile, syncScheduledTripsFromCSV, updateScheduledTripStatus, clearScheduledTrips } from '../services/supabaseService';
+import { Users, MapPin, Activity, ShieldAlert, CheckCircle, XCircle, BarChart3, UserCog, User as UserIcon, ClipboardList, Calendar, Clock, Bus, ArrowRight, ArrowRightLeft, Search, Download, X, Plus, Building, Edit2, ArrowDownCircle, ChevronRight, ChevronDown, Lock, Trash2, ShieldCheck, Check, CheckSquare, Square, Briefcase, RefreshCw, Link as LinkIcon, AlertCircle, Loader2, HelpCircle, ExternalLink, CheckCircle2, Siren, Trash, Map, Info, MessageSquare } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { SearchableDropdown } from './SearchableDropdown';
 
-interface AdminDashboardProps {
-  data: AppData;
-  refreshData: () => void;
-  currentUser?: User;
-  theme: 'light' | 'dark';
+// --- ERROR BOUNDARY ---
+interface ErrorBoundaryProps {
+  children?: ReactNode;
 }
 
-// --- SUB-COMPONENTS (Defined outside to prevent remounting on refresh) ---
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: any;
+}
 
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+
+  static getDerivedStateFromError(error: any): ErrorBoundaryState { 
+    return { hasError: true, error }; 
+  }
+  
+  componentDidCatch(error: any, errorInfo: any) { 
+    console.error("AdminDashboard Crash:", error, errorInfo); 
+  }
+  
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center">
+          <div className="bg-red-50 dark:bg-red-900/20 text-red-800 dark:text-red-200 p-6 rounded-xl border border-red-200 dark:border-red-800 inline-block max-w-lg text-left">
+            <h3 className="font-bold text-lg flex items-center gap-2 mb-2"><AlertCircle className="text-red-600" /> Dashboard Error</h3>
+            <p className="text-sm mb-4">The dashboard encountered a problem rendering.</p>
+            <button onClick={() => window.location.reload()} className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold hover:bg-red-700 transition">Reload Page</button>
+          </div>
+        </div>
+      );
+    }
+    return (this as any).props.children;
+  }
+}
+
+// --- HELPER FUNCTIONS ---
+
+const parseTimeDisplay = (timeStr: string | undefined | null): string => {
+    if (!timeStr || typeof timeStr !== 'string') return '-';
+    const trimmed = timeStr.trim().toUpperCase();
+    if (trimmed === '' || trimmed === '--:--') return '-';
+    
+    try {
+        if (trimmed.includes('PM') || trimmed.includes('AM')) return trimmed;
+        if (trimmed.includes(':')) {
+            const parts = trimmed.split(':');
+            let h = parseInt(parts[0], 10);
+            const m = parseInt(parts[1], 10);
+            if (!isNaN(h) && !isNaN(m)) {
+                const date = new Date();
+                date.setHours(h);
+                date.setMinutes(m);
+                return date.toLocaleTimeString([], {hour: 'numeric', minute:'2-digit', hour12: true}).replace(' ', '');
+            }
+        }
+    } catch (e) { return trimmed; }
+    return trimmed; 
+};
+
+const getCurrentPstMinutes = (): number => {
+    const now = new Date();
+    const pstStr = now.toLocaleString("en-US", { timeZone: "America/Los_Angeles" });
+    const pstDate = new Date(pstStr);
+    return pstDate.getHours() * 60 + pstDate.getMinutes();
+};
+
+const getMinutesFromTimeStr = (timeStr: string): number | null => {
+    if (!timeStr || timeStr === '--:--' || typeof timeStr !== 'string') return null;
+    try {
+        const parts = timeStr.split(':');
+        if (parts.length < 2) return null;
+        let h = parseInt(parts[0], 10);
+        let m = parseInt(parts[1], 10);
+        
+        if (timeStr.toUpperCase().includes('PM') && h < 12) h += 12;
+        if (timeStr.toUpperCase().includes('AM') && h === 12) h = 0;
+        
+        if (isNaN(h) || isNaN(m)) return null;
+        return h * 60 + m;
+    } catch (e) { return null; }
+};
+
+const getCurrentPstDay = (): string => {
+    const now = new Date();
+    return now.toLocaleString("en-US", { timeZone: "America/Los_Angeles", weekday: 'long' });
+};
+
+// --- TIMELINE COMPONENT ---
+const TimelinePoint = ({ label, time, currentMins }: { label: string; time: string; currentMins: number }) => {
+    const timeMins = getMinutesFromTimeStr(time);
+    const isPast = timeMins !== null && currentMins >= timeMins;
+    
+    return (
+        <div className="flex flex-col items-center gap-2 relative z-10 flex-1 px-1 group">
+            <div className={`w-3.5 h-3.5 rounded-full border-2 transition-all duration-500 shadow-sm ${isPast ? 'bg-blue-600 border-blue-600 scale-125' : 'bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-600'}`}></div>
+            <div className="flex flex-col items-center">
+                <span className={`text-[9px] font-black uppercase tracking-tighter ${isPast ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'} mb-0.5 whitespace-nowrap`}>{label}</span>
+                <span className={`text-[10px] font-mono font-bold ${isPast ? 'text-slate-900 dark:text-white' : 'text-slate-400'}`}>{parseTimeDisplay(time)}</span>
+            </div>
+        </div>
+    );
+};
+
+// --- LIFECYCLE LOGIC ---
+
+type LifecycleState = 'SCHEDULED' | 'STAGE_1' | 'TRANSIT_OUT' | 'STAGE_2' | 'TRANSIT_RET' | 'COMPLETE' | 'CANCELLED' | 'UNCONFIRMED';
+
+interface TripLifecycle {
+    state: LifecycleState;
+    label: string;
+    color: string;
+    logs: { am?: LogEntry; pm?: LogEntry; checkIn?: BusCheckIn; };
+    totalPax: number;
+    amPax: number;
+    pmPax: number;
+}
+
+const getTripLifecycle = (trip: ScheduledTrip, allLogs: LogEntry[], allCheckIns: BusCheckIn[], filterDay: string): TripLifecycle => {
+    if (trip.manualStatus === 'CANCELLED') return { state: 'CANCELLED', label: 'Cancelled', color: 'bg-red-50 text-red-700 border-red-100', logs: {}, totalPax: 0, amPax: 0, pmPax: 0 };
+    if (trip.manualStatus === 'COMPLETE') return { state: 'COMPLETE', label: 'Done', color: 'bg-green-50 text-green-700 border-green-100', logs: {}, totalPax: trip.manualStatusPax || 0, amPax: trip.manualStatusPax || 0, pmPax: 0 };
+
+    if (!trip.isActive) return { state: 'CANCELLED', label: 'Cancelled', color: 'bg-red-50 text-red-700 border-red-100', logs: {}, totalPax: 0, amPax: 0, pmPax: 0 };
+
+    const viewDayLower = filterDay.toLowerCase();
+    const matchedLogs = allLogs.filter((l: LogEntry) => {
+        const date = new Date(l.timestamp);
+        const day = date.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: 'long' }).toLowerCase();
+        return day === viewDayLower;
+    });
+
+    const checkIn = allCheckIns.find((c: BusCheckIn) => {
+        const date = new Date(c.timestamp);
+        const day = date.toLocaleDateString("en-US", { timeZone: "America/Los_Angeles", weekday: 'long' }).toLowerCase();
+        return day === viewDayLower && c.locationId === trip.departLocationId;
+    });
+
+    const amLog = matchedLogs.find(l => l.routeType === RouteType.HOTEL_TO_SITE && l.departLocationId === trip.departLocationId && l.arrivalLocationId === trip.arrivalLocationId);
+    const pmLog = matchedLogs.find(l => l.routeType === RouteType.SITE_TO_HOTEL && l.departLocationId === trip.arrivalLocationId && l.arrivalLocationId === trip.departLocationId);
+
+    const logs = { am: amLog, pm: pmLog, checkIn };
+    const amPax = amLog?.passengerCount || 0;
+    const pmPax = pmLog?.passengerCount || 0;
+    const totalPax = amPax + pmPax;
+
+    if (pmLog && pmLog.status === TripStatus.ARRIVED) return { state: 'COMPLETE', label: 'Complete', color: 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300 border-green-200 dark:border-green-800', logs, totalPax, amPax, pmPax };
+    if (pmLog && pmLog.status === TripStatus.IN_TRANSIT) return { state: 'TRANSIT_RET', label: 'In Transit (Return)', color: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/50 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 animate-pulse', logs, totalPax, amPax, pmPax };
+    if (amLog && amLog.status === TripStatus.ARRIVED) return { state: 'STAGE_2', label: 'At Site', color: 'bg-purple-100 text-purple-800 dark:bg-purple-900/50 dark:text-purple-300 border-purple-200 dark:border-purple-800', logs, totalPax, amPax, pmPax };
+    if (amLog && amLog.status === TripStatus.IN_TRANSIT) return { state: 'TRANSIT_OUT', label: 'In Transit (Out)', color: 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border-blue-200 dark:border-blue-800 animate-pulse', logs, totalPax, amPax, pmPax };
+    if (checkIn) return { state: 'STAGE_1', label: 'At Hotel', color: 'bg-orange-100 text-orange-800 dark:bg-orange-900/50 dark:text-orange-300 border-orange-200 dark:border-orange-800', logs, totalPax, amPax: 0, pmPax: 0 };
+
+    const nowPstMins = getCurrentPstMinutes();
+    const nowPstDay = getCurrentPstDay().toLowerCase();
+    
+    // Explicit comparison for "Unconfirmed" vs "Scheduled"
+    const dayOrder = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'];
+    const todayIdx = dayOrder.indexOf(nowPstDay);
+    const filterIdx = dayOrder.indexOf(filterDay.toLowerCase());
+    const isToday = filterIdx === todayIdx;
+    const isPastDay = filterIdx < todayIdx;
+
+    if (!amLog && !pmLog && !checkIn) {
+        // Mark as unconfirmed if the time has gone past the scheduled hotel arrival time
+        const scheduledHotelArrivalMins = getMinutesFromTimeStr(trip.busArrivalAtHotel);
+        const hasPassedScheduledArrival = scheduledHotelArrivalMins !== null && nowPstMins >= scheduledHotelArrivalMins;
+
+        if (isPastDay || (isToday && hasPassedScheduledArrival)) {
+            return { 
+                state: 'UNCONFIRMED', 
+                label: 'Unconfirmed', 
+                color: 'bg-amber-50 text-amber-700 border-amber-200 border-dashed dark:bg-amber-900/20 dark:text-amber-400 dark:border-amber-800', 
+                logs, 
+                totalPax: 0, 
+                amPax: 0, 
+                pmPax: 0 
+            };
+        }
+    }
+
+    return { state: 'SCHEDULED', label: 'Scheduled', color: 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600', logs, totalPax: 0, amPax: 0, pmPax: 0 };
+};
+
+// --- USER TABLE COMPONENT ---
 interface UserTableProps {
   users: User[];
   title: string;
   isRevoked?: boolean;
   data: AppData;
   refreshData: () => void;
-  onUpdateStation: (userId: string, locId: string | null) => void;
-  onUpdateTargets: (userId: string, val: any) => void;
+  onUpdateStation: (userId: string, locId: string | null) => Promise<void>;
+  onUpdateTargets: (userId: string, val: any) => Promise<void>;
   onOpenPermissions: (user: User) => void;
-  onAction: (action: () => Promise<void>) => void;
+  onAction: (action: () => Promise<void>) => Promise<void>;
 }
 
-const UserTable: React.FC<UserTableProps> = ({ 
-  users, title, isRevoked = false, data, refreshData, onUpdateStation, onUpdateTargets, onOpenPermissions, onAction 
-}) => {
-  const isSystemAdminUser = (user: User) => user.phone === '000-000-0000';
-  const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
-
+const UserTable: React.FC<UserTableProps> = ({ users, title, isRevoked, data, refreshData, onUpdateStation, onUpdateTargets, onOpenPermissions, onAction }) => {
+  const worksiteOptions = data.locations.filter(l => l.type === LocationType.WORKSITE && l.isActive);
   return (
-    <div className={`bg-white dark:bg-slate-800 rounded-xl shadow-sm border overflow-hidden ${isRevoked ? 'border-red-100 dark:border-red-800/50 mt-8' : 'border-slate-200 dark:border-slate-700'}`}>
-      <div className={`p-4 border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/20 border-red-100 dark:border-red-800/50 text-red-800 dark:text-red-300' : 'bg-slate-50 dark:bg-slate-700/50 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200'}`}>
-          <h3 className="font-bold flex items-center gap-2">
-            {isRevoked ? <ShieldAlert size={18} /> : <UserIcon size={18} />}
-            {title} ({users.length})
-          </h3>
+    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+      <div className={`p-4 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center ${isRevoked ? 'bg-red-50 dark:bg-red-900/10' : 'bg-slate-50 dark:bg-slate-700/50'}`}>
+        <h3 className="font-bold flex items-center gap-2">
+          {isRevoked ? <ShieldAlert size={18} className="text-red-500" /> : <Users size={18} className="text-blue-600" />}
+          {title}
+        </h3>
+        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300">{users.length}</span>
       </div>
-      <div className="overflow-x-auto min-h-[300px]">
+      <div className="overflow-x-auto">
         <table className="w-full text-left text-sm">
-          <thead className={`font-medium border-b ${isRevoked ? 'bg-red-50 dark:bg-red-900/10 text-red-600 dark:text-red-300 border-red-100 dark:border-red-800/50' : 'bg-slate-50 dark:bg-slate-700/30 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700'}`}>
-            <tr>
-              <th className="p-4 w-64">User Details</th>
-              <th className="p-4">Contact</th>
-              <th className="p-4 w-64">Assignments</th>
-              <th className="p-4">Role</th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Permissions</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
+          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-medium border-b dark:border-slate-700">
+            <tr><th className="p-3">User</th><th className="p-3">Current Station</th><th className="p-3">Assigned Target(s)</th><th className="p-3">Status/Role</th><th className="p-3 text-right">Actions</th></tr>
           </thead>
           <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {users.map(user => {
-                const isSysAdmin = isSystemAdminUser(user);
-                return (
-              <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition">
-                <td className="p-4 align-top">
-                   <div className="font-medium text-slate-800 dark:text-slate-100">
-                        {user.firstName} {user.lastName}
-                        {isSysAdmin && <span className="ml-2 text-[10px] bg-yellow-100 dark:bg-yellow-800/50 text-yellow-800 dark:text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-200 dark:border-yellow-700/50 uppercase tracking-wide">SysAdmin</span>}
-                   </div>
-                   <div className="text-xs text-slate-400 dark:text-slate-500 font-mono mt-0.5">ID: {user.id}</div>
-                </td>
-                <td className="p-4 align-top text-slate-500 dark:text-slate-400 font-mono">{user.phone}</td>
-                <td className="p-4 align-top">
-                    <div className="space-y-3">
-                        <div className="flex items-start gap-2">
-                            <MapPin size={14} className="text-slate-400 mt-2 flex-shrink-0" />
-                            <div className="flex-1">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-1">Station</span>
-                                <div className="flex items-center gap-1 w-full max-w-[200px]">
-                                    <div className="flex-1">
-                                        <SearchableDropdown 
-                                            options={data.locations.filter(l => l.isActive)} 
-                                            value={user.currentLocationId || ''} 
-                                            onChange={(val) => onUpdateStation(user.id, val)} 
-                                            placeholder="Set Station" 
-                                            compact={true} 
-                                        />
-                                    </div>
-                                    {user.currentLocationId && (
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); onUpdateStation(user.id, null); }} 
-                                            className="p-2 rounded-lg bg-slate-100 hover:bg-red-100 dark:bg-slate-700 dark:hover:bg-red-900/40 text-slate-400 hover:text-red-600 transition flex-shrink-0"
-                                            title="Clear Station"
-                                        >
-                                            <X size={14} strokeWidth={3} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="flex items-start gap-2">
-                            <Briefcase size={14} className="text-slate-400 mt-2 flex-shrink-0" />
-                            <div className="flex-1">
-                                <span className="text-[10px] uppercase font-bold text-slate-400 dark:text-slate-500 block leading-none mb-1">Targets</span>
-                                <div className="flex items-center gap-1 w-full max-w-[200px]">
-                                    <div className="flex-1">
-                                        <SearchableDropdown 
-                                            options={data.locations.filter(l => l.isActive && l.type === LocationType.WORKSITE)} 
-                                            value={user.assignedWorksiteIds || []} 
-                                            onChange={(val) => onUpdateTargets(user.id, val)} 
-                                            placeholder="Set Targets" 
-                                            compact={true} 
-                                            multiple={true}
-                                        />
-                                    </div>
-                                    {user.assignedWorksiteIds && user.assignedWorksiteIds.length > 0 && (
-                                        <button 
-                                            onClick={(e) => { e.stopPropagation(); onUpdateTargets(user.id, []); }} 
-                                            className="p-2 rounded-lg bg-slate-100 hover:bg-red-100 dark:bg-slate-700 dark:hover:bg-red-900/40 text-slate-400 hover:text-red-600 transition flex-shrink-0"
-                                            title="Clear Targets"
-                                        >
-                                            <X size={14} strokeWidth={3} />
-                                        </button>
-                                    )}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </td>
-                <td className="p-4 align-top">
-                    <div className="relative w-32">
-                        <select 
-                            value={user.role}
-                            disabled={isSysAdmin}
-                            onChange={async (e) => { await updateUserRole(user.id, e.target.value as UserRole); refreshData(); }}
-                            className={`w-full appearance-none pl-3 pr-8 py-1.5 rounded text-xs font-bold border cursor-pointer focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed ${
-                                user.role === UserRole.ADMIN ? 'bg-purple-50 text-purple-700 border-purple-200 dark:bg-purple-900/50 dark:text-purple-300 dark:border-purple-800/50 focus:ring-purple-500' :
-                                'bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600 focus:ring-slate-500'
-                            }`}
-                        >
-                            <option value={UserRole.AGENT}>AGENT</option>
-                            <option value={UserRole.ADMIN}>ADMIN</option>
-                        </select>
-                        {!isSysAdmin && <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-current opacity-50"><ChevronDown size={12} /></div>}
-                    </div>
-                </td>
-                <td className="p-4 align-top">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${
-                    user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' :
-                    user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300' :
-                    'bg-red-100 text-red-700 dark:bg-red-900/50 dark:text-red-300'
-                  }`}>
-                    {user.status}
-                  </span>
-                </td>
-                <td className="p-4 align-top">
-                   <div className="flex items-center gap-2">
-                    <button 
-                        onClick={() => onAction(() => toggleUserPermission(user.id, 'canViewHistory'))}
-                        className={`p-1.5 rounded transition ${user.permissions.canViewHistory ? 'text-blue-600 bg-blue-50 dark:bg-blue-900/50' : 'text-slate-400 bg-slate-100 dark:bg-slate-700'}`}
-                        title="Toggle View History"
-                    >
-                        {user.permissions.canViewHistory ? <Eye size={16} /> : <EyeOff size={16} />}
-                    </button>
-                    <button
-                        onClick={() => onOpenPermissions(user)}
-                        className={`p-1.5 rounded transition flex items-center gap-1 text-xs font-bold px-2 ${
-                            user.permissions.allowedLocationIds ? 'text-orange-600 bg-orange-50 dark:bg-orange-900/50 border border-orange-200 dark:border-orange-800/50' : 'text-slate-600 bg-slate-100 dark:bg-slate-700 border border-slate-200 dark:border-slate-600'
-                        }`}
-                        title="Manage Location Access"
-                    >
-                        <Lock size={14} />
-                        {user.permissions.allowedLocationIds ? `${user.permissions.allowedLocationIds.length}` : 'All'}
-                    </button>
-                   </div>
-                </td>
-                <td className="p-4 align-top text-right">
-                  <div className="flex justify-end gap-1">
-                    {!isSysAdmin && (
-                        <>
-                        {user.status === UserStatus.PENDING && (
-                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-green-100 hover:bg-green-200 text-green-700 dark:bg-green-900/50 dark:hover:bg-green-900 dark:text-green-300 p-2 rounded" title="Approve">
-                            <CheckCircle size={16} />
-                        </button>
-                        )}
-                        
-                        {user.status !== UserStatus.REVOKED && (
-                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/50 dark:hover:bg-red-900 dark:text-red-300 p-2 rounded" title="Revoke Access">
-                            <XCircle size={16} />
-                        </button>
-                        )}
-
-                        {user.status === UserStatus.REVOKED && (
-                        <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="bg-slate-100 hover:bg-slate-200 text-slate-700 dark:bg-slate-600 dark:hover:bg-slate-500 dark:text-slate-200 p-2 rounded" title="Restore Access">
-                            <CheckCircle size={16} />
-                        </button>
-                        )}
-                        </>
-                    )}
-                    {isSysAdmin && (
-                        <span className="text-slate-400 dark:text-slate-500 text-xs italic flex items-center gap-1"><ShieldCheck size={14}/> Protected</span>
-                    )}
-                  </div>
-                </td>
+            {users.length === 0 ? (<tr><td colSpan={5} className="p-8 text-center text-slate-400 italic">No users found.</td></tr>) : users.map(user => (
+              <tr key={user.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/50 transition-colors">
+                <td className="p-3"><div className="font-bold text-slate-800 dark:text-slate-200">{user.firstName} {user.lastName}</div><div className="text-[10px] text-slate-500 font-mono uppercase">{user.phone}</div></td>
+                <td className="p-3 w-48"><SearchableDropdown options={data.locations.filter(l => l.isActive)} value={user.currentLocationId || ''} onChange={(val: any) => onUpdateStation(user.id, val as string | null)} placeholder="Set Station" compact /></td>
+                <td className="p-3 w-48"><SearchableDropdown options={worksiteOptions} value={user.assignedWorksiteIds || []} onChange={(val: any) => onUpdateTargets(user.id, val)} placeholder="Set Target(s)" compact multiple={user.role === UserRole.ADMIN} /></td>
+                <td className="p-3"><div className="flex flex-col gap-1"><span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-center border ${user.status === UserStatus.ACTIVE ? 'bg-green-100 text-green-700 border-green-200' : user.status === UserStatus.PENDING ? 'bg-orange-100 text-orange-700 border-orange-200' : 'bg-red-100 text-red-700 border-red-200'}`}>{user.status}</span><span className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-black uppercase text-center border ${user.role === UserRole.ADMIN ? 'bg-purple-100 text-purple-700 border-purple-200' : 'bg-blue-100 text-blue-700 border-blue-200'}`}>{user.role}</span></div></td>
+                <td className="p-3 text-right"><div className="flex justify-end gap-1">{user.status === UserStatus.PENDING && <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="p-2 text-green-600 hover:bg-green-50 rounded transition" title="Approve"><ShieldCheck size={18}/></button>}{user.status === UserStatus.ACTIVE && !isRevoked && <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.REVOKED))} className="p-2 text-red-600 hover:bg-red-50 rounded transition" title="Revoke Access"><XCircle size={18}/></button>}{isRevoked && <button onClick={() => onAction(() => updateUserStatus(user.id, UserStatus.ACTIVE))} className="p-2 text-green-600 hover:bg-green-50 rounded transition" title="Restore Access"><CheckCircle size={18}/></button>}<button onClick={() => onOpenPermissions(user)} className="p-2 text-blue-600 hover:bg-blue-50 rounded transition" title="Location Permissions"><Lock size={18}/></button><button onClick={() => onAction(() => updateUserRole(user.id, user.role === UserRole.ADMIN ? UserRole.AGENT : UserRole.ADMIN))} className="p-2 text-purple-600 hover:bg-purple-50 rounded transition" title="Toggle Role"><UserCog size={18}/></button></div></td>
               </tr>
-            )})}
+            ))}
           </tbody>
         </table>
       </div>
@@ -211,744 +236,568 @@ const UserTable: React.FC<UserTableProps> = ({
 
 // --- MAIN COMPONENT ---
 
+interface AdminDashboardProps {
+  data: AppData;
+  refreshData: () => void;
+  currentUser: User | null;
+  theme: 'light' | 'dark';
+}
+
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ data, refreshData, currentUser, theme }) => {
-  const [activeTab, setActiveTab] = useState<'overview' | 'checkins' | 'users' | 'locations'>('overview');
-
-  // Log Filtering
-  const [logSearch, setLogSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState<'ALL' | TripStatus>('ALL');
-  const [logLocationFilter, setLogLocationFilter] = useState('ALL');
-  const [dateFilter, setDateFilter] = useState('');
-  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
-
-  // User Filtering
-  const [userSearch, setUserSearch] = useState('');
-  const [userRoleFilter, setUserRoleFilter] = useState<'ALL' | UserRole>('ALL');
-  const [userStatusFilter, setUserStatusFilter] = useState<'ALL' | UserStatus>('ALL');
-  const [userLocationFilter, setUserLocationFilter] = useState<string>('ALL');
-
-  // Check-in Filtering
-  // Added missing state variables for fleet check-ins filtering
-  const [checkInSearch, setCheckInSearch] = useState('');
-  const [checkInLocationFilter, setCheckInLocationFilter] = useState('ALL');
-  const [checkInDateFilter, setCheckInDateFilter] = useState('');
-
-  // Location Form
+  const [activeTab, setActiveTab] = useState<'overview' | 'checkins' | 'all-trips' | 'users' | 'locations'>('overview');
+  const [activeScheduleDay, setActiveScheduleDay] = useState('Monday');
+  const [expandedTripId, setExpandedTripId] = useState<string | null>(null);
+  const [csvUrl, setCsvUrl] = useState(localStorage.getItem('shuttle_csv_url') || '');
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [syncError, setSyncError] = useState('');
+  const [syncSuccess, setSyncSuccess] = useState(false);
+  const [scheduleSearch, setScheduleSearch] = useState('');
   const [editingLocationId, setEditingLocationId] = useState<string | null>(null);
   const [locName, setLocName] = useState('');
   const [locAddress, setLocAddress] = useState('');
   const [locType, setLocType] = useState<LocationType>(LocationType.HOTEL);
-
-  // Permission Modal
   const [managingPermissionsUser, setManagingPermissionsUser] = useState<User | null>(null);
-  const [isRestrictedMode, setIsRestrictedMode] = useState(false);
   const [selectedAllowedLocationIds, setSelectedAllowedLocationIds] = useState<Set<string>>(new Set());
-  const [permSearch, setPermSearch] = useState('');
-
-  // Log Edit Modal
   const [editingLog, setEditingLog] = useState<LogEntry | null>(null);
-  const [editLogDriver, setEditLogDriver] = useState('');
-  const [editLogCompany, setEditLogCompany] = useState('');
-  const [editLogBusNo, setEditLogBusNo] = useState('');
   const [editLogPax, setEditLogPax] = useState(0);
   const [editLogTime, setEditLogTime] = useState('');
+  const [detailSiteId, setDetailSiteId] = useState<string | null>(null);
 
   const isFullAdmin = currentUser?.role === UserRole.ADMIN;
 
-  const handleAction = async (action: () => Promise<void>) => {
-    try {
-        await action();
-        refreshData();
-    } catch (e) {
-        console.error("Action failed:", e);
-    }
+  const handleAction = async (action: () => Promise<void>) => { try { await action(); refreshData(); } catch (e: any) { console.error("Action failed:", e); } };
+  const handleUpdateStation = async (userId: string, locId: string | null) => { await handleAction(() => updateUserProfile(userId, { currentLocationId: locId })); };
+  
+  const handleUpdateTargets = async (userId: string, val: any) => { 
+    const rawVal = Array.isArray(val) ? val : [val];
+    const worksiteIds: string[] = (rawVal as any[]).filter((v: any): v is string => typeof v === 'string'); 
+    await handleAction(() => updateUserProfile(userId, { assignedWorksiteIds: worksiteIds })); 
+  };
+
+  const handleCsvSync = async () => {
+      if (!csvUrl.trim()) return;
+      setIsSyncing(true); setSyncError(''); setSyncSuccess(false);
+      try {
+          await syncScheduledTripsFromCSV(csvUrl.trim());
+          localStorage.setItem('shuttle_csv_url', csvUrl.trim());
+          setSyncSuccess(true); refreshData();
+          setTimeout(() => setSyncSuccess(false), 5000);
+      } catch (err: any) { setSyncError((err as any)?.message || 'Failed to sync CSV data.'); }
+      finally { setIsSyncing(false); }
   };
 
   const handleLocationSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!locName) return;
-    if (editingLocationId) {
-        await updateLocation(editingLocationId, { name: locName, type: locType, address: locAddress });
-        setEditingLocationId(null);
-    } else {
-        await addLocation(locName, locType, locAddress);
-    }
-    setLocName(''); setLocAddress(''); setLocType(LocationType.HOTEL);
-    refreshData();
+    e.preventDefault(); if (!locName) return;
+    if (editingLocationId) { await updateLocation(editingLocationId, { name: locName, type: locType, address: locAddress }); setEditingLocationId(null); } 
+    else { await addLocation(locName, locType, locAddress); }
+    setLocName(''); setLocAddress(''); setLocType(LocationType.HOTEL); refreshData();
   };
 
-  const startEditLocation = (loc: Location) => {
-      setEditingLocationId(loc.id); setLocName(loc.name); setLocAddress(loc.address || ''); setLocType(loc.type);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const cancelEditLocation = () => {
-      setEditingLocationId(null); setLocName(''); setLocAddress(''); setLocType(LocationType.HOTEL);
-  };
-
-  const openPermissionsModal = (user: User) => {
-      setManagingPermissionsUser(user);
-      const allowed = user.permissions.allowedLocationIds;
-      if (allowed === undefined) { setIsRestrictedMode(false); setSelectedAllowedLocationIds(new Set()); }
-      else { setIsRestrictedMode(true); setSelectedAllowedLocationIds(new Set(allowed)); }
-  };
-
-  const closePermissionsModal = () => { setManagingPermissionsUser(null); setPermSearch(''); };
-
-  const savePermissions = async () => {
-      if (managingPermissionsUser) {
-          const newAllowed = isRestrictedMode ? (Array.from(selectedAllowedLocationIds) as string[]) : undefined;
-          await updateUserAllowedLocations(managingPermissionsUser.id, newAllowed);
-          refreshData(); closePermissionsModal();
+  const handleUpdateTripStatus = async (tripId: string, status: string | null) => {
+      let pax: number | undefined = undefined;
+      if (status === 'COMPLETE') {
+          const promptVal = window.prompt("Enter passenger count for manual complete:", "0");
+          if (promptVal === null) return;
+          pax = parseInt(promptVal, 10) || 0;
+      }
+      try { 
+          await updateScheduledTripStatus(tripId, status, pax); 
+          refreshData(); 
+      } catch (e: any) { 
+          alert("Failed to update status."); 
       }
   };
 
-  const toggleAllowedLocation = (id: string) => {
-      const next = new Set(selectedAllowedLocationIds);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      setSelectedAllowedLocationIds(next);
+  const openPermissionsModal = (user: User) => { 
+    setManagingPermissionsUser(user); 
+    const allowed = user.permissions.allowedLocationIds; 
+    if (!allowed || !Array.isArray(allowed)) { 
+      setSelectedAllowedLocationIds(new Set<string>()); 
+    } else { 
+      setSelectedAllowedLocationIds(new Set<string>(allowed as string[])); 
+    } 
   };
 
-  const toggleAllVisibleLocations = (visibleIds: string[], select: boolean) => {
-      const next = new Set(selectedAllowedLocationIds);
-      visibleIds.forEach(id => { if (select) next.add(id); else next.delete(id); });
-      setSelectedAllowedLocationIds(next);
-  };
+  const savePermissions = async () => { if (managingPermissionsUser) { const newAllowed = Array.from(selectedAllowedLocationIds).length > 0 ? Array.from(selectedAllowedLocationIds) : undefined; await updateUserAllowedLocations(managingPermissionsUser.id, newAllowed); refreshData(); setManagingPermissionsUser(null); } };
+  const openEditLogModal = (log: LogEntry, e: React.MouseEvent) => { e.stopPropagation(); setEditingLog(log); setEditLogPax(log.passengerCount); const d = new Date(log.timestamp); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); setEditLogTime(d.toISOString().slice(0, 16)); };
+  const saveLogEdit = async () => { if (editingLog) { await updateLog(editingLog.id, { passengerCount: editLogPax, timestamp: new Date(editLogTime).toISOString() }); setEditingLog(null); refreshData(); } };
 
-  // Log Edit
-  const openEditLogModal = (log: LogEntry, e: React.MouseEvent) => {
-      e.stopPropagation();
-      setEditingLog(log); setEditLogDriver(log.driverName); setEditLogCompany(log.companyName);
-      setEditLogBusNo(log.busNumber); setEditLogPax(log.passengerCount);
-      const d = new Date(log.timestamp);
-      d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-      setEditLogTime(d.toISOString().slice(0, 16));
-  };
-
-  const saveLogEdit = async () => {
-      if (editingLog) {
-          await updateLog(editingLog.id, {
-              driverName: editLogDriver, companyName: editLogCompany, busNumber: editLogBusNo,
-              passengerCount: editLogPax, timestamp: new Date(editLogTime).toISOString()
-          });
-          setEditingLog(null); refreshData();
-      }
-  };
-
-  const handleDeleteLog = async (logId: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if(window.confirm('Are you sure you want to delete this log?')) { 
-          try {
-            await deleteLog(logId); 
-            refreshData(); 
-          } catch (err) {
-            console.error("Delete log failed", err);
-          }
-      }
-  };
-
-  const handleDeleteCheckIn = async (id: string, e: React.MouseEvent) => {
-      e.stopPropagation();
-      if(window.confirm('Delete this check-in record?')) {
-          try {
-            await deleteBusCheckIn(id);
-            refreshData();
-          } catch (err) {
-            console.error("Delete check-in failed", err);
-          }
-      }
-  };
-
-  // Helper for 12-hour time format
-  const formatTime = (dateStr: string) => {
-    return new Date(dateStr).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit', hour12: true});
-  };
-
-  // Helper for HH:mm string to 12-hour format
-  const formatTimeFromStr = (timeStr?: string) => {
-    if (!timeStr) return '--:--';
-    const [h, m] = timeStr.split(':');
-    const date = new Date();
-    date.setHours(parseInt(h, 10));
-    date.setMinutes(parseInt(m, 10));
-    return date.toLocaleTimeString([], {hour: 'numeric', minute:'2-digit', hour12: true});
-  };
-
-  // Data
-  const today = new Date().toLocaleDateString();
-  const todaysLogs = data.logs.filter(l => new Date(l.timestamp).toLocaleDateString() === today);
-  const totalLogs = todaysLogs.length;
-  const activeTrips = data.logs.filter(l => l.status === TripStatus.IN_TRANSIT).length;
+  const formatTimeStr = (dateStr: any) => { try { return new Date(dateStr).toLocaleTimeString([], {hour: 'numeric', minute:'2-digit', hour12: true}); } catch (e) { return '-'; } };
+  const todaysLogs = (data.logs || []).filter(l => new Date(l.timestamp).toLocaleDateString() === new Date().toLocaleDateString());
+  const activeTripsCount = (data.logs || []).filter(l => l.status === TripStatus.IN_TRANSIT).length;
   const completedTripsToday = todaysLogs.filter(l => l.status === TripStatus.ARRIVED).length;
-  const totalPassengersToday = todaysLogs.reduce((sum, log) => sum + log.passengerCount, 0);
-
-  const hoursMap = new Array(24).fill(0);
-  data.logs.forEach(log => { hoursMap[new Date(log.timestamp).getHours()]++; });
-  const hourlyData = hoursMap.map((count, hour) => ({ time: `${hour}:00`, trips: count })).filter((_, i) => i >= 6 && i <= 20);
-
-  const getLocationName = (id: string) => data.locations.find(l => l.id === id)?.name || 'Unknown';
-  const getUser = (id: string) => data.users.find(u => u.id === id);
-
-  const filteredLogs = data.logs.filter(log => {
-      const searchContent = `${log.driverName} ${log.companyName} ${log.busNumber}`.toLowerCase();
-      return (!logSearch || searchContent.includes(logSearch.toLowerCase())) &&
-             (statusFilter === 'ALL' || log.status === statusFilter) &&
-             (!dateFilter || new Date(log.timestamp).toLocaleDateString('en-CA') === dateFilter) &&
-             (logLocationFilter === 'ALL' || log.departLocationId === logLocationFilter || log.arrivalLocationId === logLocationFilter);
-  }).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  const filteredUsers = data.users.filter(u => {
-      const search = userSearch.toLowerCase();
-      return (u.firstName.toLowerCase().includes(search) || u.lastName.toLowerCase().includes(search) || u.phone.includes(search)) &&
-             (userRoleFilter === 'ALL' || u.role === userRoleFilter) &&
-             (userStatusFilter === 'ALL' || u.status === userStatusFilter) &&
-             (userLocationFilter === 'ALL' || u.currentLocationId === userLocationFilter);
-  });
-
-  const activeUsers = filteredUsers.filter(u => u.status !== UserStatus.REVOKED);
-  const revokedUsers = filteredUsers.filter(u => u.status === UserStatus.REVOKED);
-
-  // Added logic using the missing state variables
-  const filteredCheckIns = (data.busCheckIns || []).filter(c => {
-      const searchContent = `${c.driverName} ${c.companyName} ${c.busNumber}`.toLowerCase();
-      return (!checkInSearch || searchContent.includes(checkInSearch.toLowerCase())) &&
-             (checkInLocationFilter === 'ALL' || c.locationId === checkInLocationFilter) &&
-             (!checkInDateFilter || new Date(c.timestamp).toLocaleDateString('en-CA') === checkInDateFilter);
-  }).sort((a,b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-  const exportCSV = () => {
-      alert("Exporting CSV..."); 
+  const totalPassengersToday = todaysLogs.reduce((sum, log) => sum + (log.passengerCount || 0), 0);
+  const getLocationName = (id: string) => data.locations?.find(l => l.id === id)?.name || id || 'Unknown';
+  const getUserName = (userId: string) => {
+    const u = data.users.find(u => u.id === userId);
+    return u ? `${u.firstName} ${u.lastName}` : 'System';
   };
-
-  const handleUpdateStation = async (userId: string, locId: string | null) => {
-      // Pass null directly to clear assignment
-      await updateUserProfile(userId, { currentLocationId: locId });
-      refreshData();
-  };
-
-  const handleUpdateTargets = async (userId: string, val: any) => {
-      const newIds = Array.isArray(val) ? val : [val];
-      await updateUserProfile(userId, { assignedWorksiteIds: newIds });
-      refreshData();
-  };
-
-  const renderLogs = () => (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col mt-6 relative">
-      <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center rounded-t-xl">
-        <h3 className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><ClipboardList size={20} className="text-blue-600 dark:text-blue-400"/> Master Trip Logs</h3>
-        <button onClick={exportCSV} className="flex items-center gap-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-600"><Download size={16} /> Export CSV</button>
-      </div>
-      <div className="p-4 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 md:grid-cols-4 gap-3 border-b border-slate-200 dark:border-slate-700 relative z-20">
-          <input type="text" placeholder="Search..." value={logSearch} onChange={e => setLogSearch(e.target.value)} className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
-          <SearchableDropdown options={[{id:'ALL', name:'All Locs'}, ...data.locations]} value={logLocationFilter} onChange={setLogLocationFilter} placeholder="Location" compact />
-          <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as any)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700"><option value="ALL">All Status</option><option value={TripStatus.IN_TRANSIT}>In Transit</option><option value={TripStatus.ARRIVED}>Arrived</option></select>
-          <input type="date" value={dateFilter} onChange={e => setDateFilter(e.target.value)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
-      </div>
-      <div className="overflow-x-auto max-h-[500px] rounded-b-xl relative z-10">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 dark:text-slate-400 font-semibold border-b dark:border-slate-700 text-xs uppercase sticky top-0">
-            <tr>
-              <th className="p-4 w-8"></th>
-              <th className="p-4">Status</th>
-              <th className="p-4">Time</th>
-              <th className="p-4">Route</th>
-              <th className="p-4">Transport</th>
-              <th className="p-4 text-center">Pax</th>
-              <th className="p-4">Timing</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {filteredLogs.map(log => {
-                const isExpanded = expandedLogId === log.id;
-                const agent = getUser(log.userId);
-                return (
-                <React.Fragment key={log.id}>
-                <tr onClick={() => setExpandedLogId(isExpanded ? null : log.id)} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 cursor-pointer ${isExpanded ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
-                    <td className="p-4 text-slate-400 dark:text-slate-500">
-                        {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                    </td>
-                    <td className="p-4 whitespace-nowrap">
-                        <span className={`px-2 py-1 rounded text-xs font-bold ${log.status === TripStatus.IN_TRANSIT ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : 'bg-slate-100 dark:bg-slate-700 dark:text-slate-300'}`}>
-                            {log.status === TripStatus.IN_TRANSIT ? 'In Transit' : 'Arrived'}
-                        </span>
-                    </td>
-                    <td className="p-4 whitespace-nowrap">
-                      <div className="font-bold">{formatTime(log.timestamp)}</div>
-                      <div className="text-xs text-slate-400 dark:text-slate-500">{new Date(log.timestamp).toLocaleDateString()}</div>
-                    </td>
-                    <td className="p-4">
-                      <div className="font-medium text-slate-800 dark:text-slate-200">{getLocationName(log.departLocationId)} <span className="text-slate-400 dark:text-slate-500">&rarr;</span> {getLocationName(log.arrivalLocationId)}</div>
-                      <div className="text-xs text-slate-400 dark:text-slate-500">{log.routeType === RouteType.HOTEL_TO_SITE ? 'Hotel to Site' : 'Site to Hotel'}</div>
-                    </td>
-                    <td className="p-4">
-                      <div className="font-bold text-slate-800 dark:text-slate-200">{log.companyName}</div>
-                      <div className="text-xs text-slate-600 dark:text-slate-400">Bus {log.busNumber} • {log.driverName}</div>
-                    </td>
-                    <td className="p-4 font-bold text-center">{log.passengerCount}</td>
-                    <td className="p-4 whitespace-nowrap">
-                        <div className="space-y-1">
-                            {log.status === TripStatus.ARRIVED && log.actualArrivalTime ? (
-                                <div className="text-xs">
-                                    <span className="text-green-600 dark:text-green-400 font-bold">Arr:</span> <span className="font-mono">{formatTime(log.actualArrivalTime)}</span>
-                                </div>
-                            ) : null}
-                            
-                            {log.eta && (
-                                <div className={`text-xs ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300 border border-blue-100 dark:border-blue-900' : 'text-slate-500 dark:text-slate-400'} px-2 py-1 rounded inline-block font-bold`}>
-                                    <span className="uppercase text-[10px] opacity-70 mr-1">ETA:</span>
-                                    {formatTimeFromStr(log.eta)}
-                                </div>
-                            )}
-                        </div>
-                    </td>
-                    <td className="p-4 text-right">
-                        {isFullAdmin && (
-                            <div className="flex justify-end gap-1">
-                                <button onClick={(e) => openEditLogModal(log, e)} className="text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 p-2 rounded transition" title="Edit"><Edit2 size={18}/></button>
-                                <button onClick={(e) => handleDeleteLog(log.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-slate-700 p-2 rounded transition" title="Delete"><Trash2 size={18}/></button>
-                            </div>
-                        )}
-                    </td>
-                </tr>
-                {isExpanded && (
-                    <tr className="bg-blue-50/30 dark:bg-blue-900/10 animate-fadeIn">
-                        <td colSpan={8} className="p-0">
-                            <div className="p-4 border-b border-slate-100 dark:border-slate-700 grid grid-cols-1 md:grid-cols-2 gap-6 text-sm text-slate-600 dark:text-slate-400">
-                                <div>
-                                    <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">Submitted By</div>
-                                    <div className="flex items-center gap-2">
-                                        <div className="w-6 h-6 bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 rounded-full flex items-center justify-center text-xs font-bold">
-                                            {agent ? agent.firstName[0] : '?'}
-                                        </div>
-                                        <div>
-                                            <div className="font-semibold text-slate-800 dark:text-slate-200">{agent ? `${agent.firstName} ${agent.lastName}` : 'Unknown Agent'}</div>
-                                            {agent && <div className="text-xs text-slate-400 dark:text-slate-500">ID: {agent.id}</div>}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <div className="text-xs font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wide mb-1">Notes</div>
-                                    <div className="bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-600 p-2 rounded text-slate-700 dark:text-slate-300 italic">
-                                        {log.notes || 'No notes provided.'}
-                                    </div>
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                )}
-                </React.Fragment>
-                );
-            })}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
 
   const renderOverview = () => {
-    const chartAxisColor = theme === 'dark' ? '#94a3b8' : '#64748b';
-    const chartGridColor = theme === 'dark' ? '#334155' : '#f1f5f9';
+    const currentMins = getCurrentPstMinutes();
+    const currentShift = currentMins < 960 ? 'AM' : 'PM'; 
+    const todaySchedule = data.scheduledTrips.filter(t => t.dayOfWeek.toLowerCase() === getCurrentPstDay().toLowerCase());
+    
+    // Fix: Explicitly type the Set as string to ensure Array.from correctly returns string[]
+    const worksiteIds: string[] = Array.from(new Set<string>(todaySchedule.map(t => t.arrivalLocationId)));
+    
+    const siteStatuses = worksiteIds.map((siteId: string) => {
+        const trips = todaySchedule.filter(t => t.arrivalLocationId === siteId);
+        const statuses = trips.map(t => getTripLifecycle(t, data.logs, data.busCheckIns, getCurrentPstDay()));
+        
+        // REFINED LOGIC: Only strictly COMPLETE trips count for clearance progress.
+        // This ensures 'Unconfirmed' trips do not erroneously mark progress as 100%.
+        const shiftCompletedCount = statuses.filter(s => s.state === 'COMPLETE').length;
+        
+        const totalPaxForSite = statuses.reduce((sum, s) => sum + s.amPax + s.pmPax, 0);
+        
+        return { 
+          id: siteId, 
+          name: getLocationName(siteId), 
+          total: trips.length, 
+          completed: shiftCompletedCount, 
+          isClear: trips.length > 0 && shiftCompletedCount === trips.length, 
+          totalPax: totalPaxForSite, 
+          items: trips.map((t, idx) => ({ trip: t, lifecycle: statuses[idx] })) 
+        };
+    }).sort((a,b) => (a.isClear === b.isClear) ? 0 : a.isClear ? 1 : -1);
 
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Departures</div>
-            <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{totalLogs}</div>
-            <div className="text-xs text-slate-400 mt-1">Today</div>
+            <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider mb-1">Total Logs Today</div>
+            <div className="text-2xl font-black text-slate-800 dark:text-slate-100">{todaysLogs.length}</div>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Active Trips</div>
-            <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{activeTrips}</div>
-            <div className="text-xs text-slate-400 mt-1">In Transit</div>
+            <div className="text-blue-500 dark:text-blue-400 text-[10px] font-black uppercase tracking-wider mb-1">In Transit</div>
+            <div className="text-2xl font-black text-blue-600 dark:text-blue-400">{activeTripsCount}</div>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Completed</div>
-            <div className="text-2xl font-bold text-green-600 dark:text-green-400">{completedTripsToday}</div>
-            <div className="text-xs text-slate-400 mt-1">Today</div>
+            <div className="text-green-500 dark:text-green-400 text-[10px] font-black uppercase tracking-wider mb-1">Arrived</div>
+            <div className="text-2xl font-black text-green-600 dark:text-green-400">{completedTripsToday}</div>
           </div>
           <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <div className="text-slate-500 dark:text-slate-400 text-xs font-bold uppercase tracking-wider mb-1">Total Pax</div>
-            <div className="text-2xl font-bold text-slate-800 dark:text-slate-100">{totalPassengersToday}</div>
-            <div className="text-xs text-slate-400 mt-1">Passengers moved</div>
+            <div className="text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider mb-1">Total Passengers</div>
+            <div className="text-2xl font-black text-slate-800 dark:text-slate-100">{totalPassengersToday}</div>
           </div>
         </div>
-
-        {renderLogs()}
-
-        <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-4 flex items-center gap-2">
-                <BarChart3 size={18} className="text-blue-600 dark:text-blue-400" />
-                Hourly Trip Volume
-            </h3>
-            <div className="h-64 w-full">
-            <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={hourlyData}>
-                    <defs>
-                    <linearGradient id="colorTrips" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#2563eb" stopOpacity={0.1}/>
-                        <stop offset="95%" stopColor="#2563eb" stopOpacity={0}/>
-                    </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={chartGridColor} />
-                    <XAxis dataKey="time" tick={{fontSize: 10, fill: chartAxisColor}} axisLine={false} tickLine={false} />
-                    <YAxis tick={{fontSize: 10, fill: chartAxisColor}} axisLine={false} tickLine={false} />
-                    <Tooltip 
-                        contentStyle={{
-                            borderRadius: '8px', 
-                            border: `1px solid ${theme === 'dark' ? '#334155' : '#e2e8f0'}`,
-                            backgroundColor: theme === 'dark' ? '#1e293b' : '#ffffff',
-                            boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
-                        }}
-                        cursor={{strokeWidth: 1, strokeDasharray: '4 4'}}
-                    />
-                    <Area type="monotone" dataKey="trips" stroke="#2563eb" strokeWidth={2} fillOpacity={1} fill="url(#colorTrips)" />
-                </AreaChart>
-            </ResponsiveContainer>
-            </div>
-        </div>
-      </div>
-  )};
-
-  const renderCheckIns = () => (
-    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col relative">
-        <div className="p-4 border-b border-slate-200 dark:border-slate-700 bg-orange-50/30 dark:bg-orange-900/20 flex justify-between items-center rounded-t-xl">
-            <div>
-                <h3 className="font-bold text-orange-900 dark:text-orange-200 flex items-center gap-2">
-                    <ArrowDownCircle size={20} />
-                    Fleet Check-ins
-                </h3>
-            </div>
-            <span className="text-xs bg-orange-100 dark:bg-orange-800/50 text-orange-800 dark:text-orange-200 px-2 py-1 rounded-full font-bold">{filteredCheckIns.length}</span>
-        </div>
-
-        <div className="p-4 bg-slate-50 dark:bg-slate-800/50 grid grid-cols-1 md:grid-cols-3 gap-3 border-b border-slate-200 dark:border-slate-700 relative z-20">
-            <input type="text" placeholder="Search check-ins..." value={checkInSearch} onChange={e => setCheckInSearch(e.target.value)} className="w-full px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
-            <SearchableDropdown options={[{id:'ALL', name:'All Locations'}, ...data.locations]} value={checkInLocationFilter} onChange={setCheckInLocationFilter} placeholder="Location" compact />
-            <input type="date" value={checkInDateFilter} onChange={e => setCheckInDateFilter(e.target.value)} className="px-3 py-2 border dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700" />
-        </div>
-
-        <div className="overflow-x-auto max-h-[600px] relative z-10">
-            {filteredCheckIns.length === 0 ? (
-                <div className="text-center p-8 text-slate-400 dark:text-slate-500 text-sm">No check-ins match your filters.</div>
-            ) : (
-                <table className="w-full text-sm text-left">
-                    <thead className="bg-orange-50 dark:bg-orange-900/10 font-bold text-orange-800 dark:text-orange-300 sticky top-0">
-                        <tr>
-                            <th className="p-3">Time</th>
-                            <th className="p-3">Loc</th>
-                            <th className="p-3">Bus</th>
-                            <th className="p-3">Driver</th>
-                            <th className="p-3 text-right">Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-                        {filteredCheckIns.map(c => (
-                            <tr key={c.id} className="hover:bg-orange-50/20 dark:hover:bg-orange-900/10 transition">
-                                <td className="p-3">
-                                    <div className="font-bold">{formatTime(c.timestamp)}</div>
-                                    <div className="text-xs text-slate-400 dark:text-slate-500">{new Date(c.timestamp).toLocaleDateString()}</div>
-                                </td>
-                                <td className="p-3">{getLocationName(c.locationId)}</td>
-                                <td className="p-3">
-                                    <div className="font-medium text-slate-800 dark:text-slate-200">{c.companyName}</div>
-                                    <div className="text-xs text-slate-500 dark:text-slate-400">#{c.busNumber}</div>
-                                </td>
-                                <td className="p-3">{c.driverName}</td>
-                                <td className="p-3 text-right">
-                                    <button onClick={(e) => handleDeleteCheckIn(c.id, e)} className="text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded transition" title="Delete Check-in">
-                                        <Trash2 size={18} />
-                                    </button>
-                                </td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            )}
-        </div>
-    </div>
-  );
-
-  const renderUsers = () => (
-    <div className="space-y-6">
-       <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 space-y-4 md:space-y-0 md:flex md:items-center md:gap-4">
-           <div className="relative flex-1">
-                <Search className="absolute left-3 top-2.5 text-slate-400 w-5 h-5" />
-                <input 
-                    type="text" 
-                    placeholder="Search users..." 
-                    value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    className="w-full pl-10 pr-4 py-2 border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50"
-                />
-           </div>
-           
-           <div className="flex gap-2 flex-wrap md:flex-nowrap items-center">
-             <select 
-               value={userRoleFilter}
-               onChange={(e) => setUserRoleFilter(e.target.value as any)}
-               className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900 dark:text-slate-200"
-             >
-               <option value="ALL">All Roles</option>
-               <option value={UserRole.ADMIN}>Admins</option>
-               <option value={UserRole.AGENT}>Agents</option>
-             </select>
-
-             <select 
-               value={userStatusFilter}
-               onChange={(e) => setUserStatusFilter(e.target.value as any)}
-               className="px-3 py-2 bg-slate-50 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none cursor-pointer text-slate-900 dark:text-slate-200"
-             >
-               <option value="ALL">All Statuses</option>
-               <option value={UserStatus.ACTIVE}>Active</option>
-               <option value={UserStatus.PENDING}>Pending</option>
-               <option value={UserStatus.REVOKED}>Revoked</option>
-             </select>
-
-             <div className="w-48">
-                <SearchableDropdown 
-                    options={[{ id: 'ALL', name: 'All Locations' }, ...data.locations]}
-                    value={userLocationFilter}
-                    onChange={setUserLocationFilter}
-                    placeholder="All Locations"
-                    compact={true}
-                />
-             </div>
-           </div>
-       </div>
-
-       {activeUsers.length > 0 && (
-          <UserTable 
-            users={activeUsers} 
-            title="Active & Pending Users" 
-            data={data} 
-            refreshData={refreshData}
-            onUpdateStation={handleUpdateStation}
-            onUpdateTargets={handleUpdateTargets}
-            onOpenPermissions={openPermissionsModal}
-            onAction={handleAction}
-          />
-       )}
-       {revokedUsers.length > 0 && (
-          <UserTable 
-            users={revokedUsers} 
-            title="Revoked Users" 
-            isRevoked={true} 
-            data={data} 
-            refreshData={refreshData}
-            onUpdateStation={handleUpdateStation}
-            onUpdateTargets={handleUpdateTargets}
-            onOpenPermissions={openPermissionsModal}
-            onAction={handleAction}
-          />
-       )}
-    </div>
-  );
-
-  const renderLocations = () => (
-    <div className="space-y-6">
-       <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
-            <h3 className="font-bold text-slate-800 dark:text-slate-100 mb-4 flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                    {editingLocationId ? <><Edit2 className="text-white bg-orange-500 rounded-full p-1.5" size={28}/> <span>Edit Location</span></> : <><Plus className="text-white bg-blue-600 rounded-full p-1" size={24}/> <span>Add New Location</span></>}
-                </div>
-                {editingLocationId && <button onClick={cancelEditLocation} className="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 underline">Cancel Edit</button>}
-            </h3>
-            <form onSubmit={handleLocationSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Name</label>
-                    <input type="text" value={locName} onChange={e => setLocName(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50 bg-white dark:bg-slate-700" placeholder="e.g. Westin Downtown" required />
-                </div>
-                <div>
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Type</label>
-                    <div className="relative">
-                      <select value={locType} onChange={e => setLocType(e.target.value as LocationType)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none appearance-none bg-white dark:bg-slate-700 text-slate-900 dark:text-slate-50">
-                          <option value={LocationType.HOTEL}>Hotel</option>
-                          <option value={LocationType.WORKSITE}>Worksite</option>
-                      </select>
-                      <ArrowRight className="absolute right-3 top-2.5 text-slate-400 rotate-90" size={14} />
-                    </div>
-                </div>
-                 <div className="md:col-span-1">
-                    <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">Address (Optional)</label>
-                    <input type="text" value={locAddress} onChange={e => setLocAddress(e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none text-slate-900 dark:text-slate-50 bg-white dark:bg-slate-700" placeholder="123 Main St" />
-                </div>
-                <button type="submit" className={`font-bold py-2 rounded-lg hover:opacity-90 transition flex items-center justify-center gap-2 shadow-sm text-white ${editingLocationId ? 'bg-orange-500' : 'bg-blue-600'}`}>{editingLocationId ? <Save size={16} /> : <Plus size={16} />} {editingLocationId ? 'Update Location' : 'Add Location'}</button>
-            </form>
-        </div>
-
-      <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
-       <div className="overflow-x-auto">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-600 dark:text-slate-400 font-medium border-b border-slate-200 dark:border-slate-700">
-            <tr>
-              <th className="p-4">Location Details</th>
-              <th className="p-4">Type</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-right">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
-            {data.locations.map(loc => (
-              <tr key={loc.id} className={`hover:bg-slate-50 dark:hover:bg-slate-700/50 transition ${editingLocationId === loc.id ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
-                <td className="p-4">
-                    <div className="font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
-                       <MapPin size={16} className="text-slate-400"/>
-                       {loc.name}
-                    </div>
-                    {loc.address && <div className="text-xs text-slate-500 dark:text-slate-400 ml-6 mt-1">{loc.address}</div>}
-                </td>
-                <td className="p-4">
-                    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${loc.type === LocationType.HOTEL ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-300' : 'bg-orange-50 text-orange-700 dark:bg-orange-900/50 dark:text-orange-300'}`}>
-                        {loc.type === LocationType.HOTEL ? <Building size={12}/> : <Activity size={12}/>}
-                        {loc.type}
-                    </span>
-                </td>
-                <td className="p-4">
-                  <span className={`px-2 py-1 rounded text-xs font-bold ${loc.isActive ? 'bg-green-100 text-green-700 dark:bg-green-900/50 dark:text-green-300' : 'bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400'}`}>
-                    {loc.isActive ? 'Active' : 'Disabled'}
-                  </span>
-                </td>
-                <td className="p-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                        <button onClick={() => startEditLocation(loc)} className="p-1.5 text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-slate-700 rounded transition" title="Edit"><Edit2 size={16} /></button>
-                        <div className="w-px h-4 bg-slate-200 dark:bg-slate-600"></div>
-                        <button onClick={() => handleAction(() => toggleLocation(loc.id))} className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${loc.isActive ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-600'}`} title="Toggle Status"><span className={`inline-block h-4 w-4 transform rounded-full bg-white transition ${loc.isActive ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-                    </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      </div>
-    </div>
-  );
-
-  return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto relative">
-      <div className="mb-8 flex items-end justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Admin Console</h2>
-          <p className="text-slate-500 dark:text-slate-400">Operational oversight and configuration.</p>
-        </div>
-        <div className="text-sm text-slate-400 dark:text-slate-500 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
-           {new Date().toDateString()}
-        </div>
-      </div>
-
-      <div className="flex space-x-2 mb-6 border-b border-slate-200 dark:border-slate-700 pb-1 overflow-x-auto no-scrollbar">
-        <button onClick={() => setActiveTab('overview')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'overview' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
-          <div className="flex items-center space-x-2"><Activity size={16} /> <span>Overview & Logs</span></div>
-        </button>
-        <button onClick={() => setActiveTab('checkins')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'checkins' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
-          <div className="flex items-center space-x-2"><ArrowDownCircle size={16} /> <span>Fleet Check-ins</span></div>
-        </button>
-        <button onClick={() => setActiveTab('users')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'users' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
-          <div className="flex items-center space-x-2"><UserCog size={16} /> <span>User Management</span></div>
-        </button>
-        <button onClick={() => setActiveTab('locations')} className={`pb-3 px-4 text-sm font-medium transition whitespace-nowrap ${activeTab === 'locations' ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600' : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'}`}>
-           <div className="flex items-center space-x-2"><MapPin size={16} /> <span>Locations</span></div>
-        </button>
-      </div>
-
-      {activeTab === 'overview' && renderOverview()}
-      {activeTab === 'checkins' && renderCheckIns()}
-      {activeTab === 'users' && renderUsers()}
-      {activeTab === 'locations' && renderLocations()}
-
-      {managingPermissionsUser && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col animate-fadeIn">
-                  <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><Lock size={20} className="text-blue-600 dark:text-blue-400" /> Location Access Control</h3>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">Configure visibility for <span className="font-semibold text-slate-700 dark:text-slate-200">{managingPermissionsUser.firstName} {managingPermissionsUser.lastName}</span></p>
-                      </div>
-                      <button onClick={closePermissionsModal} className="p-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full text-slate-500 dark:text-slate-400 transition"><X size={20} /></button>
-                  </div>
-                  
-                  <div className="p-6 overflow-y-auto flex-1 bg-slate-50/30 dark:bg-slate-900/30">
-                      <div className="mb-6 flex items-center justify-between bg-white dark:bg-slate-700/50 p-5 rounded-xl border border-slate-200 dark:border-slate-700 shadow-sm">
-                          <div>
-                              <div className="font-bold text-slate-800 dark:text-slate-100">Restrict Location Access?</div>
-                              <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">If OFF, the user can access ALL active locations in the system.</div>
-                          </div>
-                          <button onClick={() => setIsRestrictedMode(!isRestrictedMode)} className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 ${isRestrictedMode ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-600'}`}><span className={`inline-block h-5 w-5 transform rounded-full bg-white transition shadow-sm ${isRestrictedMode ? 'translate-x-6' : 'translate-x-1'}`} /></button>
-                      </div>
-
-                      {isRestrictedMode && (
-                          <div className="space-y-4 animate-fadeIn">
-                              <div className="flex items-center justify-between">
-                                 <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">Select Allowed Locations</label>
-                                 <div className="space-x-3 text-xs font-medium">
-                                      <button onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), true)} className="text-blue-600 dark:text-blue-400 hover:underline">Select All</button>
-                                      <button onClick={() => toggleAllVisibleLocations(data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(l => l.id), false)} className="text-slate-500 dark:text-slate-400 hover:underline">Clear</button>
+        
+        {/* Live Trip Logs */}
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <div className="p-4 border-b dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center"><h3 className="font-bold flex items-center gap-2"><ClipboardList size={18} /> Live Trip Logs</h3></div>
+          <div className="overflow-x-auto max-h-[500px] overflow-y-auto no-scrollbar">
+            <table className="w-full text-left text-sm border-collapse min-w-[950px]">
+                <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 font-black uppercase text-[10px] sticky top-0 z-10 border-b dark:border-slate-700">
+                  <tr>
+                    <th className="p-4">Status</th>
+                    <th className="p-4">Time</th>
+                    <th className="p-4">Route / Comments</th>
+                    <th className="p-4">Transport / Logged By</th>
+                    <th className="p-4 text-center">Pax</th>
+                    <th className="p-4">Timing</th>
+                    <th className="p-4 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y dark:divide-slate-700">
+                    {data.logs.length === 0 ? <tr><td colSpan={7} className="p-8 text-center text-slate-400 italic">No logs yet today.</td></tr> : data.logs.slice(0, 100).map(log => (
+                        <tr key={log.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30 transition-colors group">
+                            <td className="p-4">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-black border inline-flex items-center gap-1 ${log.status === TripStatus.IN_TRANSIT ? 'bg-blue-50 text-blue-700 border-blue-100 animate-pulse' : 'bg-green-50 text-green-700 border-green-100'}`}>
+                                {log.status === TripStatus.IN_TRANSIT ? <Clock size={10}/> : <CheckCircle2 size={10}/>}
+                                {log.status.replace('_', ' ')}
+                              </span>
+                            </td>
+                            <td className="p-4 font-mono font-bold text-slate-800 dark:text-slate-200">
+                              {formatTimeStr(log.timestamp)}
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-col">
+                                <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                  <span className="truncate max-w-[120px]">{getLocationName(log.departLocationId)}</span>
+                                  <ArrowRight size={12} className="text-slate-300 flex-shrink-0" />
+                                  <span className="truncate max-w-[120px]">{getLocationName(log.arrivalLocationId)}</span>
+                                </div>
+                                {log.notes && (
+                                  <div className="flex items-start gap-1.5 mt-1 text-[10px] text-yellow-700 dark:text-yellow-400 font-medium italic bg-yellow-50/50 dark:bg-yellow-900/10 px-1.5 py-0.5 rounded border border-yellow-100/50 dark:border-yellow-900/30">
+                                    <MessageSquare size={10} className="flex-shrink-0 mt-0.5" />
+                                    <span className="truncate max-w-[200px]">{log.notes}</span>
                                   </div>
+                                )}
                               </div>
-                              
-                              <div className="relative">
-                                  <Search className="absolute left-3 top-2.5 text-slate-400 w-4 h-4" />
-                                  <input type="text" placeholder="Search locations..." value={permSearch} onChange={(e) => setPermSearch(e.target.value)} className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none shadow-sm" />
+                            </td>
+                            <td className="p-4">
+                              <div className="flex flex-col">
+                                <div className="text-xs font-black text-slate-700 dark:text-slate-300 uppercase tracking-tight">
+                                  {log.companyName} • <span className="text-blue-600 dark:text-blue-400">#{log.busNumber}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-400 dark:text-slate-500 font-bold flex items-center gap-1 mt-0.5">
+                                  <UserIcon size={10} className="flex-shrink-0" />
+                                  <span className="truncate">Driver: {log.driverName}</span>
+                                  <span className="mx-1">•</span>
+                                  <span className="truncate">By: {getUserName(log.userId)}</span>
+                                </div>
                               </div>
+                            </td>
+                            <td className="p-4 text-center">
+                              <div className="inline-block px-2 py-1 bg-slate-100 dark:bg-slate-700 rounded text-xs font-black text-slate-800 dark:text-slate-100">
+                                {log.passengerCount}
+                              </div>
+                            </td>
+                            <td className="p-4">
+                               <div className="flex flex-col">
+                                 {log.actualArrivalTime ? (
+                                   <div className="text-[10px] font-black text-green-600 dark:text-green-400 uppercase tracking-widest flex items-center gap-1">
+                                      <Check size={10}/> ARR {formatTimeStr(log.actualArrivalTime)}
+                                   </div>
+                                 ) : log.eta ? (
+                                   <div className="text-[10px] font-black text-blue-600 dark:text-blue-400 uppercase tracking-widest flex items-center gap-1">
+                                      <Clock size={10}/> ETA {log.eta}
+                                   </div>
+                                 ) : <span className="text-[10px] text-slate-300 font-bold uppercase tracking-widest italic">In Transit</span>}
+                               </div>
+                            </td>
+                            <td className="p-4 text-right">
+                              <button onClick={(e) => openEditLogModal(log, e)} className="p-2 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/50 rounded-lg transition-colors" title="Edit Entry">
+                                <Edit2 size={16}/>
+                              </button>
+                            </td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+          </div>
+        </div>
 
-                              <div className="bg-white dark:bg-slate-700/50 border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden shadow-sm max-h-72 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-700">
-                                  {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).map(loc => { const isSelected = selectedAllowedLocationIds.has(loc.id); return (
-                                      <div key={loc.id} onClick={() => toggleAllowedLocation(loc.id)} className={`flex items-center px-4 py-3 cursor-pointer transition hover:bg-slate-50 dark:hover:bg-slate-700 ${isSelected ? 'bg-blue-50/30 dark:bg-blue-900/20' : ''}`}>
-                                          <div className={`flex-shrink-0 mr-3 transition-colors ${isSelected ? 'text-blue-600 dark:text-blue-400' : 'text-slate-300 dark:text-slate-50'}`}>{isSelected ? <CheckSquare size={20} /> : <Square size={20} />}</div>
-                                          <div className="flex-1 min-w-0">
-                                              <div className={`text-sm font-medium truncate ${isSelected ? 'text-blue-900 dark:text-blue-200' : 'text-slate-700 dark:text-slate-300'}`}>{loc.name}</div>
-                                              <div className="flex items-center gap-1.5 mt-0.5">{loc.type === LocationType.HOTEL ? <span className="text-[10px] bg-slate-100 dark:bg-slate-600 text-slate-500 dark:text-slate-400 px-1.5 py-0.5 rounded border border-slate-200 dark:border-slate-500">Hotel</span> : <span className="text-[10px] bg-indigo-50 dark:bg-indigo-900/50 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-100 dark:border-indigo-800/50">Worksite</span>}</div>
-                                          </div>
-                                      </div>
-                                  )})}
-                                  {data.locations.filter(l => l.isActive && l.name.toLowerCase().includes(permSearch.toLowerCase())).length === 0 && <div className="p-8 text-center text-slate-400 text-sm">No locations found.</div>}
-                              </div>
-                          </div>
-                      )}
+        {/* Worksite Clearance Section */}
+        {siteStatuses.length > 0 && (
+            <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-md border border-slate-200 dark:border-slate-700 overflow-hidden">
+                <div className="p-4 px-6 border-b border-slate-100 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-800/50 flex items-center justify-between">
+                    <div>
+                        <h3 className="font-black text-slate-800 dark:text-slate-100 text-sm uppercase tracking-widest flex items-center gap-2"><Siren size={18} className="text-red-500" /> Worksite Clearance</h3>
+                        <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5 tracking-tight">Shift tracking & arrival verification</p>
+                    </div>
+                    <div className={`px-3 py-1 rounded-full text-[10px] font-black border shadow-sm ${currentShift === 'AM' ? 'bg-orange-50 text-orange-700 border-orange-100' : 'bg-indigo-50 text-indigo-700 border-indigo-100'}`}>
+                        {currentShift} SHIFT ACTIVE
+                    </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 p-4">
+                    {siteStatuses.map(site => (
+                        <button key={site.id} onClick={() => setDetailSiteId(site.id)} className={`text-left p-4 rounded-2xl border transition-all duration-300 group relative overflow-hidden ${site.isClear ? 'bg-green-50/20 border-green-100 opacity-60' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm hover:border-blue-400 hover:shadow-lg'}`}>
+                            {site.isClear && <div className="absolute top-0 right-0 p-2 text-green-500"><CheckCircle2 size={16} /></div>}
+                            <div className="font-black text-xs text-slate-800 dark:text-slate-100 uppercase leading-tight mb-3 pr-4 group-hover:text-blue-600 transition-colors">{site.name}</div>
+                            
+                            <div className="space-y-1.5">
+                                <div className="flex justify-between items-end text-[10px] font-black uppercase tracking-tighter">
+                                    <span className="text-slate-400">Progress</span>
+                                    <span className={site.isClear ? 'text-green-600' : 'text-blue-600'}>{Math.round((site.completed / site.total) * 100)}%</span>
+                                </div>
+                                <div className="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
+                                    <div className={`h-full transition-all duration-1000 ease-out ${site.isClear ? 'bg-green-500' : 'bg-blue-600'}`} style={{ width: `${(site.completed / Math.max(site.total, 1)) * 100}%` }}></div>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 flex justify-between items-center pt-3 border-t border-slate-50 dark:border-slate-700/50">
+                                <div className="flex flex-col">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase leading-none">Buses</span>
+                                    <span className="text-xs font-black text-slate-700 dark:text-slate-200">{site.completed} / {site.total}</span>
+                                </div>
+                                <div className="flex flex-col items-end">
+                                    <span className="text-[9px] font-bold text-slate-400 uppercase leading-none">Pax Total</span>
+                                    <span className="text-xs font-black text-slate-700 dark:text-slate-200">{site.totalPax}</span>
+                                </div>
+                            </div>
+                        </button>
+                    ))}
+                </div>
+            </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAllTrips = () => {
+      const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      const currentPstMins = getCurrentPstMinutes();
+      
+      const allTrips = (data.scheduledTrips || [])
+          .filter(t => t.dayOfWeek.toLowerCase() === activeScheduleDay.toLowerCase())
+          .filter(t => {
+              const depName = getLocationName(t.departLocationId).toLowerCase();
+              const arrName = getLocationName(t.arrivalLocationId).toLowerCase();
+              const q = scheduleSearch.toLowerCase();
+              return !scheduleSearch || depName.includes(q) || arrName.includes(q) || (String(t.amCrId || '').toLowerCase().includes(q));
+          })
+          .sort((a, b) => (a.shiftStartTime || '').localeCompare(b.shiftStartTime || ''));
+
+      return (
+          <div className="space-y-6">
+              <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 flex flex-col md:flex-row items-center gap-4">
+                  <div className="flex-1 w-full">
+                      <h3 className="font-bold flex items-center gap-2 mb-2 text-slate-800 dark:text-slate-100"><RefreshCw size={18} /> Master Schedule Sync</h3>
+                      <div className="flex gap-2">
+                        <input type="text" placeholder="Paste Google Sheet CSV URL" value={csvUrl} onChange={(e) => setCsvUrl(e.target.value)} className="flex-1 px-4 py-2.5 border dark:border-slate-600 rounded-xl text-sm bg-slate-50 dark:bg-slate-900 focus:ring-2 focus:ring-blue-500 outline-none transition" />
+                        <button onClick={handleCsvSync} disabled={isSyncing} className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white px-6 py-2 rounded-xl font-bold transition flex items-center gap-2">{isSyncing ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} Sync</button>
+                      </div>
                   </div>
-                  
-                  <div className="p-6 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex justify-end space-x-3 rounded-b-xl">
-                      <button onClick={closePermissionsModal} className="px-5 py-2.5 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition">Cancel</button>
-                      <button onClick={savePermissions} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98]">Save Changes</button>
+              </div>
+
+              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
+                {days.map(day => (
+                    <button key={day} onClick={() => setActiveScheduleDay(day)} className={`px-5 py-2 rounded-full text-xs font-black transition-all whitespace-nowrap ${activeScheduleDay === day ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-white dark:bg-slate-800 text-slate-500 border border-slate-200 dark:border-slate-700 hover:bg-slate-50'}`}>
+                        {day.toUpperCase()}
+                    </button>
+                ))}
+              </div>
+              
+              <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <div className="p-4 border-b dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex justify-between items-center">
+                    <h4 className="font-black uppercase text-xs tracking-widest flex items-center gap-2 text-slate-800 dark:text-slate-100"><Calendar size={18} /> Daily Schedule: {activeScheduleDay}</h4>
+                    <div className="relative">
+                        <Search className="absolute left-3 top-2 text-slate-400" size={14} />
+                        <input type="text" placeholder="Quick search..." value={scheduleSearch} onChange={e => setScheduleSearch(e.target.value)} className="pl-9 pr-4 py-1.5 border dark:border-slate-600 rounded-full text-xs bg-white dark:bg-slate-700 outline-none focus:ring-1 focus:ring-blue-500" />
+                    </div>
+                  </div>
+                  <div className="overflow-x-auto">
+                      <table className="w-full text-left text-sm border-collapse">
+                          <thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 font-black uppercase text-[10px] border-b dark:border-slate-700">
+                              <tr>
+                                  <th className="p-4 w-8"></th>
+                                  <th className="p-4 w-28">Status</th>
+                                  <th className="p-4">Route Full Leg (Hotel ⇄ Worksite)</th>
+                                  <th className="p-4 w-32 text-right">Shift Start</th>
+                                  <th className="p-4 w-24 text-right">Actions</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y dark:divide-slate-700">
+                              {allTrips.length === 0 ? <tr><td colSpan={5} className="p-20 text-center text-slate-400 italic bg-slate-50/50">No scheduled trips found for this criteria.</td></tr> : allTrips.map(trip => {
+                                  const isRowExpanded = expandedTripId === trip.id;
+                                  const lifecycle = getTripLifecycle(trip, data.logs, data.busCheckIns, activeScheduleDay);
+                                  const depLoc = data.locations.find(l => l.id === trip.departLocationId);
+                                  const arrLoc = data.locations.find(l => l.id === trip.arrivalLocationId);
+
+                                  return (
+                                  <React.Fragment key={trip.id}>
+                                      <tr onClick={() => setExpandedTripId(isRowExpanded ? null : trip.id)} className={`hover:bg-blue-50/30 dark:hover:bg-blue-900/10 cursor-pointer transition-all duration-200 ${isRowExpanded ? 'bg-blue-50/50 dark:bg-blue-900/20' : ''}`}>
+                                          <td className="p-4 text-slate-400">{isRowExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</td>
+                                          <td className="p-4"><span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border shadow-sm ${lifecycle.color}`}>{lifecycle.label}</span></td>
+                                          <td className="p-4">
+                                              <div className="flex flex-col gap-1">
+                                                  <div className="font-black text-slate-900 dark:text-white uppercase leading-tight text-xs tracking-tight">{depLoc?.name}</div>
+                                                  <div className="flex items-center gap-3">
+                                                      <div className="w-4 h-px bg-slate-300 dark:bg-slate-600"></div>
+                                                      <span className="font-black text-slate-500 dark:text-slate-400 uppercase leading-tight text-[11px] tracking-tight">{arrLoc?.name}</span>
+                                                  </div>
+                                              </div>
+                                          </td>
+                                          <td className="p-4 text-right font-mono font-black text-blue-600 text-sm">{parseTimeDisplay(trip.shiftStartTime)}</td>
+                                          <td className="p-4 text-right">
+                                              <div className="flex justify-end gap-2" onClick={e => e.stopPropagation()}>
+                                                  {isFullAdmin && (
+                                                      <select onChange={e => handleUpdateTripStatus(trip.id, e.target.value === 'AUTO' ? null : e.target.value)} className="text-[10px] font-black border rounded px-1.5 py-0.5 bg-white dark:bg-slate-700" value={trip.manualStatus || 'AUTO'}>
+                                                          <option value="AUTO">AUTO</option>
+                                                          <option value="COMPLETE">DONE</option>
+                                                          <option value="CANCELLED">X</option>
+                                                      </select>
+                                                  )}
+                                                  {trip.amCrId && <a href="#" className="p-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded transition shadow-sm" title={`CR ID: ${trip.amCrId}`}><ExternalLink size={12}/></a>}
+                                              </div>
+                                          </td>
+                                      </tr>
+                                      {isRowExpanded && (
+                                          <tr className="bg-slate-50/30 dark:bg-slate-800/30 animate-fadeIn">
+                                              <td colSpan={5} className="p-0 border-b dark:border-slate-700">
+                                                  <div className="p-8 space-y-10">
+                                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                                          <div className="flex items-start gap-4 bg-white dark:bg-slate-800 p-5 rounded-2xl border dark:border-slate-700 shadow-sm transition-transform hover:scale-[1.01]">
+                                                              <div className="p-3 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-400 rounded-xl"><Building size={24} /></div>
+                                                              <div className="min-w-0">
+                                                                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Hotel Point</div>
+                                                                  <div className="font-black text-sm text-slate-800 dark:text-white uppercase truncate">{depLoc?.name}</div>
+                                                                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-2 flex items-start gap-1.5 leading-relaxed italic"><MapPin size={12} className="flex-shrink-0 mt-0.5" /> {depLoc?.address || 'No physical address provided.'}</div>
+                                                              </div>
+                                                          </div>
+                                                          <div className="flex items-start gap-4 bg-white dark:bg-slate-800 p-5 rounded-2xl border dark:border-slate-700 shadow-sm transition-transform hover:scale-[1.01]">
+                                                              <div className="p-3 bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 rounded-xl"><Map size={24} /></div>
+                                                              <div className="min-w-0">
+                                                                  <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1.5">Worksite Point</div>
+                                                                  <div className="font-black text-sm text-slate-800 dark:text-white uppercase truncate">{arrLoc?.name}</div>
+                                                                  <div className="text-xs text-slate-500 dark:text-slate-400 mt-2 flex items-start gap-1.5 leading-relaxed italic"><MapPin size={12} className="flex-shrink-0 mt-0.5" /> {arrLoc?.address || 'No physical address provided.'}</div>
+                                                              </div>
+                                                          </div>
+                                                      </div>
+                                                      <div className="bg-white dark:bg-slate-800 p-10 rounded-3xl border dark:border-slate-700 shadow-lg relative overflow-hidden group">
+                                                          <div className="absolute top-0 left-0 w-1.5 h-full bg-blue-600 opacity-20"></div>
+                                                          <div className="absolute top-[3.75rem] left-[10%] right-[10%] h-[2px] bg-slate-100 dark:bg-slate-700 z-0"></div>
+                                                          <div className="flex items-center justify-between relative z-10 px-2">
+                                                              <TimelinePoint label="Bus Arr" time={trip.busArrivalAtHotel} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Boarding" time={trip.boardingBeginsAtHotel} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Outbound" time={trip.hotelDepartureTime} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Arr Site" time={trip.busArrivalAtWorksite} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Staging" time={trip.busStageTimeAtWorksite} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Return" time={trip.worksiteDepartureTime} currentMins={currentPstMins} />
+                                                              <TimelinePoint label="Arr Hotel" time={trip.busArrivalAtHotelReturn} currentMins={currentPstMins} />
+                           </div>
+                                                      </div>
+                                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                          {lifecycle.logs.am ? (
+                                                              <div className="p-5 bg-blue-50/50 dark:bg-blue-900/10 rounded-2xl border border-blue-100 dark:border-blue-900/30 flex items-center justify-between">
+                                                                  <div className="flex items-center gap-4">
+                                                                      <div className="w-12 h-12 bg-blue-600 text-white rounded-2xl flex items-center justify-center font-black text-sm shadow-md">OUT</div>
+                                                                      <div>
+                                                                          <div className="text-[10px] font-black uppercase text-blue-900 dark:text-blue-300 tracking-wider">Outbound Trip Recorded</div>
+                                                                          <div className="text-sm text-blue-800 dark:text-blue-200 font-black mt-0.5">{lifecycle.logs.am.companyName} • {lifecycle.amPax} PAX</div>
+                                                                      </div>
+                                                                  </div>
+                                                                  <button onClick={(e) => openEditLogModal(lifecycle.logs.am!, e)} className="p-2.5 text-blue-600 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-xl transition-colors"><Edit2 size={18}/></button>
+                                                              </div>
+                                                          ) : <div className="p-5 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-400 font-black text-[10px] uppercase flex items-center justify-center gap-3 tracking-widest"><AlertCircle size={14}/> Outbound Not Logged</div>}
+                                                          {lifecycle.logs.pm ? (
+                                                              <div className="p-5 bg-indigo-50/50 dark:bg-indigo-900/10 rounded-2xl border border-indigo-100 dark:border-indigo-900/30 flex items-center justify-between">
+                                                                  <div className="flex items-center gap-4">
+                                                                      <div className="w-12 h-12 bg-indigo-600 text-white rounded-2xl flex items-center justify-center font-black text-sm shadow-md">RET</div>
+                                                                      <div>
+                                                                          <div className="text-[10px] font-black uppercase text-indigo-900 dark:text-indigo-300 tracking-wider">Return Trip Recorded</div>
+                                                                          <div className="text-sm text-indigo-800 dark:text-blue-200 font-black mt-0.5">{lifecycle.logs.pm.companyName} • {lifecycle.pmPax} PAX</div>
+                                                                      </div>
+                                                                  </div>
+                                                                  <button onClick={(e) => openEditLogModal(lifecycle.logs.pm!, e)} className="p-2.5 text-indigo-600 hover:bg-indigo-100 dark:hover:bg-indigo-900/50 rounded-xl transition-colors"><Edit2 size={18}/></button>
+                                                              </div>
+                                                          ) : <div className="p-5 bg-slate-50 dark:bg-slate-900/50 rounded-2xl border border-dashed border-slate-300 dark:border-slate-700 text-slate-400 font-black text-[10px] uppercase flex items-center justify-center gap-3 tracking-widest"><AlertCircle size={14}/> Return Not Logged</div>}
+                                                      </div>
+                                                  </div>
+                                              </td>
+                                          </tr>
+                                      )}
+                                  </React.Fragment>
+                                  );
+                              })}
+                          </tbody>
+                      </table>
                   </div>
               </div>
           </div>
+      );
+  };
+
+  const detailedSite = useMemo(() => {
+    if (!detailSiteId) return null;
+    const site = data.locations.find(l => l.id === detailSiteId);
+    if (!site) return null;
+    
+    const trips = data.scheduledTrips.filter(t => t.arrivalLocationId === detailSiteId && t.dayOfWeek.toLowerCase() === getCurrentPstDay().toLowerCase());
+    const items = trips.map(t => ({ trip: t, lifecycle: getTripLifecycle(t, data.logs, data.busCheckIns, getCurrentPstDay()) }));
+    
+    return { site, items };
+  }, [detailSiteId, data.scheduledTrips, data.logs, data.busCheckIns]);
+
+  const setSearchQuery = (val: string) => {
+    setScheduleSearch(val);
+  };
+
+  return (
+    <ErrorBoundary>
+      <div className="md:p-4 max-w-7xl mx-auto">
+        <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden mb-6 flex overflow-x-auto no-scrollbar">
+            {[{ id: 'overview', label: 'Dashboard', icon: BarChart3 }, { id: 'all-trips', label: 'Master Schedule', icon: Map }, { id: 'checkins', label: 'Bus Arrivals', icon: ArrowDownCircle }, { id: 'users', label: 'Team', icon: Users }, { id: 'locations', label: 'Locs', icon: MapPin }].map(tab => (
+              <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`flex-1 min-w-[100px] py-4 text-[11px] font-black uppercase tracking-widest flex flex-col items-center justify-center gap-1 border-b-2 transition ${activeTab === tab.id ? 'border-blue-600 text-blue-700 dark:text-blue-400 bg-blue-50/20' : 'border-transparent text-slate-400 hover:bg-slate-50'}`}>
+                <tab.icon size={20} /> {tab.label}
+              </button>
+            ))}
+        </div>
+        <div className="animate-fadeIn">
+          {activeTab === 'overview' && renderOverview()}
+          {activeTab === 'all-trips' && renderAllTrips()}
+          {activeTab === 'checkins' && (
+              <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+                  <div className="p-4 border-b dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 flex flex-col md:flex-row md:items-center justify-between gap-4"><h3 className="font-bold flex items-center gap-2"><ArrowDownCircle size={18} /> Bus Arrival History</h3></div>
+                  <div className="overflow-x-auto"><table className="w-full text-left text-sm"><thead className="bg-slate-50 dark:bg-slate-700/50 text-slate-500 font-bold uppercase text-[10px]"><tr><th className="p-4">Time</th><th className="p-4">Loc</th><th className="p-4">Details</th><th className="p-4 text-right">Actions</th></tr></thead><tbody className="divide-y dark:divide-slate-700">{(data.busCheckIns || []).map(c => (<tr key={c.id} className="hover:bg-slate-50 dark:hover:bg-slate-700/30"><td className="p-4 font-mono font-bold">{formatTimeStr(c.timestamp)}</td><td className="p-4 font-bold">{getLocationName(c.locationId)}</td><td className="p-4 text-xs font-medium text-slate-600 dark:text-slate-400">{c.companyName} • Bus {c.busNumber}</td><td className="p-4 text-right"><button onClick={() => handleAction(() => deleteBusCheckIn(c.id))} className="text-red-500 p-2 hover:bg-red-50 rounded-lg"><Trash2 size={16}/></button></td></tr>))}</tbody></table></div>
+              </div>
+          )}
+          {activeTab === 'users' && <div className="space-y-4"><UserTable users={(data.users || []).filter(u => u.status !== UserStatus.REVOKED)} title="Active Team" data={data} refreshData={refreshData} onUpdateStation={handleUpdateStation} onUpdateTargets={handleUpdateTargets} onOpenPermissions={openPermissionsModal} onAction={handleAction} /></div>}
+          {activeTab === 'locations' && (
+              <div className="space-y-6">
+                  <div className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700"><h3 className="font-bold mb-4 flex items-center gap-2"><Plus size={18}/> Add Location</h3><form onSubmit={handleLocationSubmit} className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end"><div><label className="text-xs font-bold text-slate-500 mb-1 block">Name</label><input type="text" value={locName} onChange={e => setLocName(e.target.value)} className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-700 dark:border-slate-600" placeholder="Name" required /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Address</label><input type="text" value={locAddress} onChange={e => setLocAddress(e.target.value)} className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-700 dark:border-slate-600" placeholder="Address" /></div><div><label className="text-xs font-bold text-slate-500 mb-1 block">Type</label><select value={locType} onChange={e => setLocType(e.target.value as LocationType)} className="w-full px-4 py-2.5 border rounded-xl dark:bg-slate-700 dark:border-slate-600"><option value={LocationType.HOTEL}>Hotel</option><option value={LocationType.WORKSITE}>Worksite</option></select></div><button type="submit" className="bg-blue-600 text-white font-bold py-2.5 rounded-xl">Save</button></form></div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">{data.locations.map(loc => (<div key={loc.id} className="p-4 rounded-xl border bg-white dark:bg-slate-800 dark:border-slate-700 flex justify-between items-center transition-all hover:border-blue-300"><div><div className="font-black text-slate-800 dark:text-slate-100 uppercase text-sm tracking-tight">{loc.name}</div><div className="text-[10px] text-slate-500 italic mt-1">{loc.address || 'No address set'}</div></div><div className="flex gap-2"><button onClick={() => toggleLocation(loc.id)} className={`p-2 rounded-lg transition ${loc.isActive ? 'text-green-600 bg-green-50' : 'text-slate-300 bg-slate-50'}`}><CheckCircle size={18}/></button></div></div>))}</div>
+              </div>
+          )}
+        </div>
+      </div>
+
+      {/* WORKSITE BREAKDOWN MODAL */}
+      {detailedSite && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-[110] flex items-end md:items-center justify-center p-0 md:p-4">
+          <div className="bg-white dark:bg-slate-900 rounded-t-3xl md:rounded-3xl shadow-2xl w-full max-w-2xl h-[85vh] md:h-auto md:max-h-[90vh] flex flex-col animate-slideInUp overflow-hidden">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-900 sticky top-0 z-10 rounded-t-3xl">
+              <div>
+                <h3 className="font-black text-lg uppercase tracking-tight text-slate-800 dark:text-white leading-none mb-1">{detailedSite.site.name}</h3>
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Shift Completion Breakdown</p>
+              </div>
+              <button onClick={() => setDetailSiteId(null)} className="p-2 hover:bg-slate-200 dark:hover:bg-slate-800 rounded-full transition-colors"><X size={24}/></button>
+            </div>
+            
+            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4 no-scrollbar">
+                {detailedSite.items.length === 0 ? (
+                    <div className="py-20 text-center text-slate-400 italic">No scheduled trips assigned to this worksite today.</div>
+                ) : detailedSite.items.map(({ trip, lifecycle }) => (
+                    <div key={trip.id} className={`p-4 rounded-2xl border transition-all ${lifecycle.state === 'COMPLETE' ? 'bg-green-50/30 border-green-100 dark:border-green-900/30' : lifecycle.state === 'UNCONFIRMED' ? 'bg-amber-50/30 border-amber-100 border-dashed dark:border-amber-900/30' : 'bg-white dark:bg-slate-800 border-slate-100 dark:border-slate-700 shadow-sm'}`}>
+                        <div className="flex justify-between items-start mb-3">
+                            <div className="flex items-center gap-2">
+                                <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase border tracking-widest ${lifecycle.color}`}>{lifecycle.label}</span>
+                                <span className="text-[10px] font-black text-blue-600 dark:text-blue-400 font-mono">{parseTimeDisplay(trip.shiftStartTime)}</span>
+                            </div>
+                            {trip.amCrId && (
+                                <a href="#" className="flex items-center gap-1 text-[9px] font-black text-slate-400 hover:text-blue-500 uppercase">
+                                    CR: {trip.amCrId} <ExternalLink size={10}/>
+                                </a>
+                            )}
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <div className="min-w-0">
+                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Departure Hotel</div>
+                                <div className="font-black text-xs text-slate-800 dark:text-slate-100 truncate uppercase">{getLocationName(trip.departLocationId)}</div>
+                            </div>
+                            <div className="text-right">
+                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest leading-none mb-1">Status</div>
+                                <div className="font-black text-xs text-slate-800 dark:text-slate-100">{lifecycle.totalPax} PAX</div>
+                            </div>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            
+            <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 rounded-b-3xl">
+                <button onClick={() => setDetailSiteId(null)} className="w-full bg-slate-800 dark:bg-blue-600 hover:bg-slate-900 dark:hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-lg transition transform active:scale-[0.98] uppercase tracking-widest text-sm">Close Breakdown</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {managingPermissionsUser && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-md w-full animate-fadeIn flex flex-col max-h-[85vh]">
+            <div className="p-5 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+              <h3 className="font-black text-sm uppercase tracking-widest">Access Control: {managingPermissionsUser.firstName}</h3>
+              <button onClick={() => setManagingPermissionsUser(null)} className="p-1 hover:bg-slate-100 rounded-full"><X size={20}/></button>
+            </div>
+            <div className="p-4 overflow-y-auto flex-1 space-y-1">
+                {data.locations.filter(l => l.isActive).map(loc => {
+                    const isSelected = selectedAllowedLocationIds.has(loc.id);
+                    return (
+                        <button key={loc.id} onClick={() => { const next = new Set(selectedAllowedLocationIds); if (next.has(loc.id)) next.delete(loc.id); else next.add(loc.id); setSelectedAllowedLocationIds(next); }} className={`w-full text-left px-4 py-2.5 rounded-xl flex items-center justify-between transition ${isSelected ? 'bg-blue-600 text-white font-black' : 'hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300'}`}>{loc.name} {isSelected ? <CheckSquare size={18}/> : <Square size={18}/>}</button>
+                    );
+                })}
+            </div>
+            <div className="p-5 border-t"><button onClick={savePermissions} className="w-full bg-blue-600 hover:bg-blue-700 text-white font-black py-4 rounded-2xl shadow-lg transition transform active:scale-[0.98]">Save Access Settings</button></div>
+          </div>
+        </div>
       )}
 
       {editingLog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-              <div className="bg-white dark:bg-slate-800 rounded-xl shadow-2xl w-full max-w-lg flex flex-col animate-fadeIn">
-                  <div className="p-6 border-b border-slate-200 dark:border-slate-700 flex justify-between items-center bg-slate-50/50 dark:bg-slate-800/50">
-                      <div>
-                        <h3 className="text-xl font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2"><Edit2 size={20} className="text-blue-600 dark:text-blue-400" /> Edit Trip Log</h3>
-                        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">ID: {editingLog.id}</p>
-                      </div>
-                      <button onClick={() => setEditingLog(null)} className="p-2 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 rounded-full text-slate-500 dark:text-slate-400 transition"><X size={20} /></button>
-                  </div>
-                  
-                  <div className="p-6 overflow-y-auto space-y-4">
-                      {['Driver Name', 'Company', 'Bus Number', 'Passengers', 'Departure Time'].map(label => {
-                          const key = label.toLowerCase().replace(' ', '_');
-                          const valueMap: any = { driver_name: editLogDriver, company: editLogCompany, bus_number: editLogBusNo, passengers: editLogPax, departure_time: editLogTime };
-                          const setterMap: any = { driver_name: setEditLogDriver, company: setEditLogCompany, bus_number: setEditLogBusNo, passengers: setEditLogPax, departure_time: setEditLogTime };
-                          const type = key.includes('time') ? 'datetime-local' : (key === 'passengers' ? 'number' : 'text');
-                          return (
-                          <div key={key}>
-                              <label className="block text-xs font-bold text-slate-500 dark:text-slate-400 uppercase mb-1">{label}</label>
-                              <input type={type} value={valueMap[key]} onChange={e => setterMap[key](type === 'number' ? parseInt(e.target.value) : e.target.value)} className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none bg-white dark:bg-slate-700" />
-                          </div>
-                      )})}
-                  </div>
-                  
-                  <div className="p-6 border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/50 flex justify-end space-x-3 rounded-b-xl">
-                      <button onClick={() => setEditingLog(null)} className="px-5 py-2.5 rounded-xl text-slate-600 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-700 border border-transparent hover:border-slate-200 dark:hover:border-slate-600 transition">Cancel</button>
-                      <button onClick={saveLogEdit} className="px-6 py-2.5 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition shadow-lg shadow-blue-600/20 transform active:scale-[0.98] flex items-center gap-2"><Save size={16} /> Save Changes</button>
-                  </div>
-              </div>
-          </div>
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-800 p-8 rounded-3xl shadow-2xl max-sm w-full animate-fadeIn border dark:border-slate-700"><h3 className="font-black text-lg mb-6 uppercase tracking-tight">Modify Log Entry</h3><div className="space-y-5"><div><label className="text-[10px] font-black uppercase text-slate-400 mb-1 block">Passengers (Pax)</label><input type="number" className="w-full border dark:border-slate-600 rounded-xl p-3 bg-slate-50 dark:bg-slate-900 outline-none focus:ring-2 focus:ring-blue-500 transition" value={editLogPax} onChange={e => setEditLogPax(parseInt(e.target.value))} /></div><div><label className="text-[10px] font-black uppercase text-slate-400 mb-1 block">Departure Time</label><input type="datetime-local" className="w-full border dark:border-slate-600 rounded-xl p-3 bg-slate-50 dark:bg-slate-900 outline-none focus:ring-2 focus:ring-blue-500 transition" value={editLogTime} onChange={e => setEditLogTime(e.target.value)} /></div></div><div className="flex gap-4 mt-8"><button onClick={() => setEditingLog(null)} className="flex-1 py-3 bg-slate-100 dark:bg-slate-700 rounded-xl font-bold transition hover:bg-slate-200">Cancel</button><button onClick={saveLogEdit} className="flex-1 py-3 bg-blue-600 text-white font-black rounded-xl shadow-lg transition hover:bg-blue-700">Update</button></div></div>
+        </div>
       )}
-    </div>
+    </ErrorBoundary>
   );
 };

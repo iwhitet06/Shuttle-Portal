@@ -1,3 +1,4 @@
+
 export enum UserRole {
   ADMIN = 'ADMIN',
   AGENT = 'AGENT',
@@ -68,6 +69,41 @@ export interface LogEntry {
   notes?: string;
 }
 
+export interface ScheduledTrip {
+  id: string;
+  dayOfWeek: string; // Monday, Tuesday, etc.
+  
+  // Core Info
+  departLocationId: string;
+  arrivalLocationId: string;
+  vehicleCount: number;
+  vehicleType: string;
+  shiftStartTime: string; // AM Shift Start
+  pmShiftStartTime?: string; // PM Shift Start (Optional/Distinct)
+  notes?: string;
+  isActive: boolean;
+
+  // Admin Overrides
+  manualStatus?: string; // 'COMPLETE', 'CANCELLED', etc.
+  manualStatusPax?: number;
+
+  // AM Timing
+  busArrivalAtHotel: string;
+  boardingBeginsAtHotel: string;
+  beOnCurbAtHotel: string;
+  hotelDepartureTime: string;
+  busArrivalAtWorksite: string;
+
+  // PM Timing
+  busStageTimeAtWorksite: string;
+  worksiteDepartureTime: string;
+  busArrivalAtHotelReturn: string;
+
+  // CoachRail IDs
+  amCrId: string;
+  pmCrId: string;
+}
+
 export interface BusCheckIn {
   id: string;
   userId: string;
@@ -100,6 +136,7 @@ export interface AppData {
   locations: Location[];
   logs: LogEntry[];
   busCheckIns: BusCheckIn[];
+  scheduledTrips: ScheduledTrip[];
   groups: Group[];
   messages: Message[];
   currentUser: User | null;

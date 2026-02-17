@@ -1,3 +1,4 @@
+
 import React, { useState, useRef, useEffect } from 'react';
 import { ChevronDown, Search, Check, Square, CheckSquare } from 'lucide-react';
 
@@ -63,7 +64,7 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
       e.stopPropagation();
       
       if (multiple) {
-          const currentArray = Array.isArray(value) ? value : (value ? [value as string] : []);
+          const currentArray = Array.isArray(value) ? (value as string[]) : (value ? [value as string] : []);
           let newArray: string[];
           if (currentArray.includes(id)) {
               newArray = currentArray.filter(i => i !== id);
@@ -78,7 +79,7 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
   };
 
   return (
-    <div className="relative w-full" ref={wrapperRef}>
+    <div className="relative w-full" ref={wrapperRef} style={{ zIndex: isOpen ? 100 : 'auto' }}>
       <div 
         onClick={() => { setIsOpen(!isOpen); setSearch(''); }}
         className={`w-full bg-white dark:bg-slate-700/50 border dark:border-slate-600 transition group cursor-pointer flex items-center justify-between ${
@@ -91,11 +92,11 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
         <span className={`truncate mr-2 ${compact ? 'text-sm' : 'text-sm font-medium'} ${isValueSelected ? 'text-slate-900 dark:text-slate-50' : 'text-slate-500 dark:text-slate-400'}`}>
           {displayText}
         </span>
-        <ChevronDown size={16} className="text-slate-400 dark:text-slate-500 flex-shrink-0" />
+        <ChevronDown size={16} className={`text-slate-400 dark:text-slate-500 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
       </div>
 
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-slate-200 dark:border-slate-700 z-50 overflow-hidden max-h-60 flex flex-col animate-fadeIn">
+        <div className="absolute top-full left-0 right-0 mt-1 bg-white dark:bg-slate-800 rounded-lg shadow-2xl border border-slate-200 dark:border-slate-700 z-[100] overflow-hidden max-h-60 flex flex-col animate-fadeIn">
           <div className="p-2 border-b border-slate-100 dark:border-slate-700 sticky top-0 bg-white dark:bg-slate-800" onClick={(e) => e.stopPropagation()}>
             <div className="relative">
               <Search className="absolute left-2 top-2.5 text-slate-400 w-3 h-3" />
@@ -105,16 +106,16 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                 placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full pl-7 pr-3 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-base outline-none focus:border-blue-500 text-slate-800 dark:text-slate-200"
+                className="w-full pl-7 pr-3 py-1.5 bg-slate-50 dark:bg-slate-700 border border-slate-200 dark:border-slate-600 rounded-md text-sm outline-none focus:border-blue-500 text-slate-800 dark:text-slate-200"
               />
             </div>
           </div>
-          <div className="overflow-y-auto flex-1 p-1">
-            {filtered.length === 0 && <div className="p-2 text-xs text-slate-400 text-center">No matches found</div>}
+          <div className="overflow-y-auto flex-1 p-1 no-scrollbar">
+            {filtered.length === 0 && <div className="p-4 text-xs text-slate-400 text-center italic">No matches found</div>}
             {filtered.map(opt => {
               let isSelected = false;
               if (multiple) {
-                  const arr = Array.isArray(value) ? value : [];
+                  const arr = Array.isArray(value) ? (value as string[]) : [];
                   isSelected = arr.includes(opt.id);
               } else {
                   isSelected = value === opt.id;
@@ -124,10 +125,10 @@ export const SearchableDropdown: React.FC<SearchableDropdownProps> = ({
                 <div
                   key={opt.id}
                   onClick={(e) => handleSelect(opt.id, e)}
-                  className={`px-3 py-2 text-sm rounded-md cursor-pointer transition flex items-center justify-between ${
+                  className={`px-3 py-2 text-sm rounded-md cursor-pointer transition flex items-center justify-between mb-0.5 ${
                     isSelected && !multiple 
-                    ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-medium' 
-                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'
+                    ? 'bg-blue-50 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300 font-bold' 
+                    : 'text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/50'
                   }`}
                 >
                   <span className="truncate">{opt.name}</span>

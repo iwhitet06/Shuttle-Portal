@@ -16,6 +16,9 @@ const App: React.FC = () => {
   const [isRestoringSession, setIsRestoringSession] = useState(true);
   const [view, setView] = useState<'LOG_TRIPS' | 'MESSAGES' | 'ADMIN_CONSOLE'>('LOG_TRIPS');
   
+  // Ref to store the stringified version of the last data fetch for comparison
+  const lastDataRef = useRef<string>('');
+  
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     if (typeof localStorage !== 'undefined') {
       const saved = localStorage.getItem('theme');
@@ -46,6 +49,14 @@ const App: React.FC = () => {
   const fetchData = async (isInitialLoad: boolean = false): Promise<AppData | null> => {
     try {
       const fetchedData = await loadData();
+      
+      // OPTIMIZATION: Deep comparison to prevent unnecessary re-renders
+      // This stops the UI from "flashing" or lagging during background polling
+      const currentDataStr = JSON.stringify(fetchedData);
+      if (!isInitialLoad && lastDataRef.current === currentDataStr) {
+        return fetchedData;
+      }
+      lastDataRef.current = currentDataStr;
       setData(fetchedData);
       
       if (isInitialLoad) {
@@ -62,7 +73,10 @@ const App: React.FC = () => {
       } else if (currentUser) {
         const updatedUser = fetchedData.users.find(u => u.id === currentUser.id);
         if (updatedUser) {
-          setCurrentUser(updatedUser);
+          // Only update current user state if meaningful changes occurred to avoid loops
+          if (JSON.stringify(updatedUser) !== JSON.stringify(currentUser)) {
+             setCurrentUser(updatedUser);
+          }
         } else {
           handleLogout();
         }

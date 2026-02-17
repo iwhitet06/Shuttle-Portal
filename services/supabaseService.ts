@@ -156,7 +156,7 @@ const mapGroup = (data: any): Group => {
 export const loadData = async (): Promise<AppData> => {
   const safeFetchRawSchedule = async () => {
       try {
-          const res = await supabase.from('scheduled_trips').select('*');
+          const res = await supabase.from('socal_routes').select('*');
           if (res.error) throw res.error;
           return res.data || [];
       } catch (e) {
@@ -180,10 +180,16 @@ export const loadData = async (): Promise<AppData> => {
   
   const findLocId = (name: string | null) => {
       if (!name) return null;
-      const clean = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const exact = mappedLocations.find(l => l.name.toLowerCase().replace(/[^a-z0-9]/g, '') === clean);
+      const clean = name.toLowerCase().trim();
+      const exact = mappedLocations.find(l => l.name.toLowerCase().trim() === clean);
       if (exact) return exact.id;
-      return mappedLocations.find(l => l.name.toLowerCase().replace(/[^a-z0-9]/g, '').includes(clean) || clean.includes(l.name.toLowerCase().replace(/[^a-z0-9]/g, '')))?.id;
+      
+      // Fuzzy match
+      const superClean = clean.replace(/[^a-z0-9]/g, '');
+      return mappedLocations.find(l => {
+          const lClean = l.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return lClean.includes(superClean) || superClean.includes(lClean);
+      })?.id;
   };
 
   rawSchedule.forEach((row: any) => {
@@ -200,10 +206,10 @@ export const loadData = async (): Promise<AppData> => {
                   vehicleCount: row.vehicle_count || 1,
                   vehicleType: row.vehicle_type || 'Bus',
                   shiftStartTime: row.shift_start_time || '',
-                  pmShiftStartTime: row.pm_shift_start_time || '', // Load PM shift time
+                  pmShiftStartTime: row.pm_shift_start_time || '',
                   busArrivalAtHotel: row.bus_arrival_at_hotel || '',
                   boardingBeginsAtHotel: row.boarding_begins_at_hotel || '',
-                  beOnCurbAtHotel: row.be_on_curb_at_hotel || '',
+                  beOnCurbAtHotel: '', 
                   hotelDepartureTime: row.hotel_departure_time || '', 
                   busArrivalAtWorksite: row.bus_arrival_at_worksite || '',
                   busStageTimeAtWorksite: row.bus_stage_time_at_worksite || '',
@@ -250,113 +256,111 @@ export const syncScheduledTripsFromCSV = async (csvUrl: string) => {
         const header = rows[0].map(h => h.toLowerCase().trim());
         const dataRows = rows.slice(1);
 
-        // Helper to find column indices flexibly
-        const getIdx = (candidates: string[]) => header.findIndex(h => candidates.some(c => h.includes(c.toLowerCase())));
+        const getIdx = (candidates: string[]) => header.findIndex(h => candidates.some(c => h === c.toLowerCase() || h.includes(c.toLowerCase())));
         
         const idxHotel = getIdx(['hotel']);
+        const idxHotelAddr = getIdx(['hotel address']);
         const idxWorksite = getIdx(['worksite']);
-        const idxVehicleCount = header.findIndex(h => (h.includes('vehicle') && h.includes('count')) || h === 'vehicle count');
-        const idxVehicleType = header.findIndex(h => h.includes('vehicle type') || h === 'vehicle');
+        const idxWorksiteAddr = getIdx(['worksite address']);
+        const idxVehicleCount = getIdx(['vehicle count']);
+        const idxVehicleType = getIdx(['vehicle type']);
         const idxShiftStart = getIdx(['shift start time']);
-        const idxBoardingBegins = getIdx(['boarding begins']);
-        const idxBeOnCurb = getIdx(['be on curb']);
-        const idxHotelDeparture = getIdx(['departure time']);
+        
+        const busArrivalIndices = header.reduce((acc, h, i) => h === 'bus arrival at hotel' ? [...acc, i] : acc, [] as number[]);
+        const idxBusArrivalHotelOutbound = busArrivalIndices.length > 0 ? busArrivalIndices[0] : -1;
+        const idxBusArrivalHotelReturn = busArrivalIndices.length > 1 ? busArrivalIndices[1] : -1;
+
+        const idxBoardingBegins = getIdx(['boarding begins at worksite hotel']);
+        const idxHotelDeparture = getIdx(['departure time at worksite hotel']);
         const idxBusArrivalWorksite = getIdx(['bus arrival at worksite']);
-        const idxBusStageTime = getIdx(['bus stage time']);
-        const idxWorksiteDeparture = getIdx(['bus departure time from worksite', 'bus departure time']);
+        const idxBusStageTime = getIdx(['bus stage time at worksite']);
+        const idxWorksiteDeparture = getIdx(['bus departure time from worksite']);
         
-        // Handle potentially multiple "Bus Arrival at Hotel" columns (one for AM start, one for PM return)
-        const allArrivalIndices = header.reduce((acc, h, i) => h.includes('bus arrival at hotel') ? [...acc, i] : acc, [] as number[]);
-        const idxBusArrivalHotelStart = allArrivalIndices.length > 0 ? allArrivalIndices[0] : -1;
-        const idxBusArrivalHotelEnd = allArrivalIndices.length > 1 ? allArrivalIndices[1] : -1;
-        
-        const idxNotes = getIdx(['trip comment', 'notes']);
-        const realIdxCrAm = header.findIndex(h => h.includes('id cr') && h.includes('am'));
-        const realIdxCrPm = header.findIndex(h => h.includes('id cr') && h.includes('pm'));
+        const idxNotes = getIdx(['trip comment']);
+        const idxCrId = header.findIndex(h => h.includes('id cr'));
+        const idxShiftIndicator = header.findIndex(h => h.includes('shift') && (h.includes('am') || h.includes('pm')));
 
         if (idxHotel === -1 || idxWorksite === -1) throw new Error("Missing required columns: 'Hotel' and 'Worksite'.");
 
-        // Fetch current schedule to perform merge
-        const { data: existingTrips } = await supabase.from('scheduled_trips').select('*');
-        const currentSchedule = existingTrips || [];
-        const mergedRecords: Map<string, any> = new Map();
-
-        // 1. Load existing records into the merge map to preserve data from previous syncs
-        currentSchedule.forEach(t => {
-            // Key: Hotel|Worksite|VehicleType (normalized)
-            const key = `${t.hotel}|${t.worksite}|${t.vehicle_type}`.toLowerCase().trim();
-            mergedRecords.set(key, t);
+        // --- STEP 1: AUTO-POPULATE LOCATIONS ---
+        const uniqueHotels = new Map<string, string>();
+        const uniqueWorksites = new Map<string, string>();
+        
+        dataRows.forEach(row => {
+            if (row[idxHotel]) uniqueHotels.set(row[idxHotel].trim(), row[idxHotelAddr] || '');
+            if (row[idxWorksite]) uniqueWorksites.set(row[idxWorksite].trim(), row[idxWorksiteAddr] || '');
         });
 
-        // 2. Overlay new data from the CSV
+        const { data: currentLocs } = await supabase.from('locations').select('name');
+        const existingNames = new Set((currentLocs || []).map(l => l.name.toLowerCase().trim()));
+
+        const newLocs: any[] = [];
+        uniqueHotels.forEach((addr, name) => {
+            if (!existingNames.has(name.toLowerCase())) {
+                newLocs.push({ name, address: addr, type: LocationType.HOTEL, is_active: true });
+                existingNames.add(name.toLowerCase());
+            }
+        });
+        uniqueWorksites.forEach((addr, name) => {
+            if (!existingNames.has(name.toLowerCase())) {
+                newLocs.push({ name, address: addr, type: LocationType.WORKSITE, is_active: true });
+                existingNames.add(name.toLowerCase());
+            }
+        });
+
+        if (newLocs.length > 0) {
+            await supabase.from('locations').insert(newLocs);
+        }
+
+        // --- STEP 2: SYNC ROUTES ---
+        const mergedRecords: Map<string, any> = new Map();
+
         dataRows.forEach((row) => {
-            if (row.length < 2) return;
+            if (row.length < 3) return;
             const hotel = row[idxHotel] || '';
             const worksite = row[idxWorksite] || '';
             const vType = idxVehicleType !== -1 ? row[idxVehicleType] : 'Bus';
             
-            // Create a unique key for this route leg
-            const key = `${hotel}|${worksite}|${vType}`.toLowerCase().trim();
+            // Refined unique key to separate AM/PM shifts for the same route
+            const key = `${hotel}|${worksite}|${vType}|${row[idxShiftStart] || ''}`.toLowerCase().trim();
             
-            // Get existing record or initialize new one
-            const existing = mergedRecords.get(key) || { 
-                hotel, 
-                worksite, 
-                vehicle_type: vType, 
-                vehicle_count: 1,
-                manual_status: null 
-            };
+            const existing = { 
+                hotel, worksite, vehicle_type: vType, vehicle_count: 1, manual_status: null 
+            } as any;
             
-            // Always update vehicle count if present
-            if (idxVehicleCount !== -1) existing.vehicle_count = parseInt(row[idxVehicleCount]) || 1;
+            if (idxVehicleCount !== -1 && row[idxVehicleCount]) existing.vehicle_count = parseInt(row[idxVehicleCount]) || 1;
 
-            // Determine if this row looks like an AM trip (has hotel departure) or PM trip (has worksite departure)
-            const hasHotelDep = idxHotelDeparture !== -1 && row[idxHotelDeparture] && row[idxHotelDeparture].trim() !== '';
-            const hasWorksiteDep = idxWorksiteDeparture !== -1 && row[idxWorksiteDeparture] && row[idxWorksiteDeparture].trim() !== '';
+            const shiftStr = idxShiftIndicator !== -1 ? row[idxShiftIndicator].toUpperCase() : (row[0] || '').toUpperCase();
+            const isPM = shiftStr.includes('PM');
 
-            // Map Shift Start Time appropriately
             if (idxShiftStart !== -1 && row[idxShiftStart]) {
-                if (hasHotelDep) {
-                    existing.shift_start_time = row[idxShiftStart];
-                } else if (hasWorksiteDep) {
-                    existing.pm_shift_start_time = row[idxShiftStart];
-                } else {
-                    // Fallback: If unambiguous (only one shift start logic?), default to AM
-                    existing.shift_start_time = row[idxShiftStart];
-                }
+                if (isPM) existing.pm_shift_start_time = row[idxShiftStart];
+                else existing.shift_start_time = row[idxShiftStart];
             }
 
-            // Update AM specific fields
-            if (idxBusArrivalHotelStart !== -1 && row[idxBusArrivalHotelStart]) existing.bus_arrival_at_hotel = row[idxBusArrivalHotelStart];
+            // Sync Timeline Fields
+            if (idxBusArrivalHotelOutbound !== -1 && row[idxBusArrivalHotelOutbound]) existing.bus_arrival_at_hotel = row[idxBusArrivalHotelOutbound];
             if (idxBoardingBegins !== -1 && row[idxBoardingBegins]) existing.boarding_begins_at_hotel = row[idxBoardingBegins];
-            if (idxBeOnCurb !== -1 && row[idxBeOnCurb]) existing.be_on_curb_at_hotel = row[idxBeOnCurb];
             if (idxHotelDeparture !== -1 && row[idxHotelDeparture]) existing.hotel_departure_time = row[idxHotelDeparture];
             if (idxBusArrivalWorksite !== -1 && row[idxBusArrivalWorksite]) existing.bus_arrival_at_worksite = row[idxBusArrivalWorksite];
-            
-            // Update PM specific fields
             if (idxBusStageTime !== -1 && row[idxBusStageTime]) existing.bus_stage_time_at_worksite = row[idxBusStageTime];
             if (idxWorksiteDeparture !== -1 && row[idxWorksiteDeparture]) existing.worksite_departure_time = row[idxWorksiteDeparture];
-            if (idxBusArrivalHotelEnd !== -1 && row[idxBusArrivalHotelEnd]) existing.bus_arrival_at_hotel_return = row[idxBusArrivalHotelEnd];
+            if (idxBusArrivalHotelReturn !== -1 && row[idxBusArrivalHotelReturn]) existing.bus_arrival_at_hotel_return = row[idxBusArrivalHotelReturn];
             
-            if (realIdxCrAm !== -1 && row[realIdxCrAm]) existing.am_cr_id = row[realIdxCrAm];
-            if (realIdxCrPm !== -1 && row[realIdxCrPm]) existing.pm_cr_id = row[realIdxCrPm];
+            if (idxCrId !== -1 && row[idxCrId]) {
+                if (isPM) existing.pm_cr_id = row[idxCrId];
+                else existing.am_cr_id = row[idxCrId];
+            }
             if (idxNotes !== -1 && row[idxNotes]) existing.trip_comment = row[idxNotes];
 
             mergedRecords.set(key, existing);
         });
 
-        const finalRecords = Array.from(mergedRecords.values()).map(r => {
-            // Remove system fields to prevent conflicts on re-insert
-            const { id, created_at, ...rest } = r;
-            return rest;
-        });
-
+        const finalRecords = Array.from(mergedRecords.values());
         if (finalRecords.length === 0) throw new Error("No valid records found to sync.");
 
-        // Clear existing (except special placeholder if any) and re-insert merged records
-        await supabase.from('scheduled_trips').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-        const { error } = await supabase.from('scheduled_trips').insert(finalRecords);
-        
+        await supabase.from('socal_routes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        const { error } = await supabase.from('socal_routes').insert(finalRecords);
         if (error) throw error;
         return true;
     } catch (err: any) { throw err; }
@@ -391,13 +395,13 @@ export const registerUser = async (firstName: string, lastName: string, phone: s
 };
 
 export const clearScheduledTrips = async () => {
-    const { error } = await supabase.from('scheduled_trips').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+    const { error } = await supabase.from('socal_routes').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (error) throw error;
 };
 
 export const updateScheduledTripStatus = async (tripId: string, status: string | null, pax?: number) => {
   const rowId = tripId.split('_')[0];
-  const { error } = await supabase.from('scheduled_trips').update({ 
+  const { error } = await supabase.from('socal_routes').update({ 
       manual_status: status,
       manual_status_pax: pax 
   }).eq('id', rowId);
